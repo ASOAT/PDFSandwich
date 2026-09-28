@@ -1,0 +1,31 @@
+# Dependencies and build output
+node_modules/
+.venv/
+__pycache__/
+*.py[cod]
+dist/
+build/
+release/
+coverage/
+.pytest_cache/
+.cache/
+
+# Local configuration and private material
+.env
+.env.*
+!.env.example
+*.log
+data/
+local-data/
+test-results/
+playwright-report/
+*.pdf
+*.sqlite
+*.sqlite3
+*.db
+
+# Developer files
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
