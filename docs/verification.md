@@ -29,3 +29,14 @@
 批注写回时生成备份会增加磁盘用量，当前不自动清理用户的备份文件。
 
 独立 PyInstaller 后端已完成真实页翻译（包含排版和字体子进程）。打包脚本显式处理 bitstring 动态模块、Hyperscan DLL 搜索目录和 tiktoken 命名空间插件。
+
+## Windows 成品验证
+
+最终 `release/win-unpacked/PDFSandwich.exe` 已在独立测试配置下运行，未携带 API Key。
+实际打开旋转 PDF 页面并生成中文 PDF；本次示例单页翻译约 36.6 秒（CPU，本机已有模型/字体）。
+`scripts/packaged-smoke.mjs` 已通过，截图为 `test-results/packaged-bilingual.png` 和 `packaged-rotated.png`。
+
+NSIS 安装程序构建成功：`PDFSandwich Setup 0.1.0.exe`，308,381,736 字节，约 294 MiB。
+SHA-256：`0F222F742FEFF29616B3A39B19C9F68FA1C2B31A5D37652DEA38C1BE631E669A`。
+运行目录约 1 GiB，首次离线资源另需约 400 MiB。程序未购买代码签名证书。
+已验证安装包中的同源独立程序；未在另一台全新 Windows 设备上执行安装验收。
