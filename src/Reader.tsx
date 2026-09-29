@@ -5,8 +5,8 @@ import { acquirePdf, clearPdfCache } from './pdf';
 import { fromView, toView, transformRect, viewSize } from './geometry';
 import type { Document, Mark, PageInfo, Point, Rect, Side, Tool, Match } from './types';
 
-export type ReaderHandle = { go: (page: number, fraction?: number) => void };
-type Props = { doc: Document; side: Side; zoom: number; tool: Tool; color: string; marks: Mark[]; matches: Match[]; onPosition: (page: number, fraction: number) => void; onMark: (mark: Mark) => void; onSelectMark: (id: string) => void; onTranslate: (page: number) => void; onError: (message: string) => void };
+export type ReaderHandle = { go: (page: number, fraction?: number) => void; captureZoomAnchor: (x?: number, y?: number) => void };
+type Props = { doc: Document; side: Side; zoom: number; tool: Tool; color: string; marks: Mark[]; matches: Match[]; onPosition: (page: number, fraction: number) => void; onWheelZoom: (factor: number, x: number, y: number) => void; onMark: (mark: Mark) => void; onSelectMark: (id: string) => void; onTranslate: (page: number) => void; onError: (message: string) => void };
 
 function PdfPage({ doc, side, page: index, scale, info, tool, color, marks, matches, onMark, onSelectMark, onError }: Omit<Props,'zoom'|'onPosition'|'onTranslate'> & { page: number; scale: number; info: PageInfo }) {
   const canvas = useRef<HTMLCanvasElement>(null), text = useRef<HTMLDivElement>(null), surface = useRef<HTMLDivElement>(null);
@@ -76,13 +76,49 @@ export const Reader = forwardRef<ReaderHandle, Props>((props, ref) => {
   const scale = Math.max(.2,(width-64)/maxWidth)*zoom;
   const offsets=useMemo(()=>{let top=24;return doc.pages.map(info=>{const value=top;top+=viewSize(info)[1]*scale+40;return value;});},[doc.id,scale]);
   const total=offsets.at(-1)!+viewSize(doc.pages.at(-1)!)[1]*scale+40;
-  function indexAt(top:number) { let low=0,high=offsets.length-1;while(low<high){const mid=Math.ceil((low+high)/2);if(offsets[mid]<=top)low=mid;else high=mid-1;}return low; }
+  function indexAt(top:number, positions=offsets) { let low=0,high=positions.length-1;while(low<high){const mid=Math.ceil((low+high)/2);if(positions[mid]<=top)low=mid;else high=mid-1;}return low; }
+  const layout=useRef({scale,width,offsets,id:doc.id});
+  const zoomAnchor=useRef<{page:number;localX:number;localY:number;x:number;y:number}|null>(null);
+  function captureZoomAnchor(x=.5,y=.5,previous=layout.current){
+    const node=viewport.current;if(!node)return;
+    const px=node.clientWidth*x,py=node.clientHeight*y;
+    const page=indexAt(node.scrollTop+py,previous.offsets);
+    const pageLeft=(Math.max(previous.width,maxWidth*previous.scale+64)-viewSize(doc.pages[page])[0]*previous.scale)/2;
+    zoomAnchor.current={page,localX:(node.scrollLeft+px-pageLeft)/previous.scale,localY:(node.scrollTop+py-previous.offsets[page])/previous.scale,x:px,y:py};
+  }
   const go=(page:number,fraction=0)=>{if(!viewport.current)return;page=Math.max(0,Math.min(doc.pages.length-1,page));const top=Math.max(0,offsets[page]+fraction*(viewSize(doc.pages[page])[1]*scale+40)-24);ignoredTop.current=top;viewport.current.scrollTop=top;setScrollTop(viewport.current.scrollTop);};
-  useImperativeHandle(ref,()=>({go}));
+  useImperativeHandle(ref,()=>({go,captureZoomAnchor}));
   useLayoutEffect(()=>{if(!viewport.current)return;const observer=new ResizeObserver(([entry])=>{setWidth(entry.contentRect.width);setHeight(entry.contentRect.height);});observer.observe(viewport.current);return()=>observer.disconnect();},[]);
   useEffect(()=>{if(restored.current!==doc.id){restored.current=doc.id;go(doc.currentPage);clearPdfCache();}},[doc.id,scale]);
-  const priorScale=useRef(scale);
-  useLayoutEffect(()=>{if(priorScale.current!==scale){go(doc.currentPage);priorScale.current=scale;}},[scale]);
+  useLayoutEffect(()=>{
+    const previous=layout.current,node=viewport.current;
+    if(node&&previous.id===doc.id&&previous.scale!==scale){
+      if(!zoomAnchor.current)captureZoomAnchor(.5,.5,previous);
+      const anchor=zoomAnchor.current!;
+      const pageLeft=(Math.max(width,maxWidth*scale+64)-viewSize(doc.pages[anchor.page])[0]*scale)/2;
+      ignoredTop.current=null;
+      node.scrollTop=offsets[anchor.page]+anchor.localY*scale-anchor.y;
+      node.scrollLeft=pageLeft+anchor.localX*scale-anchor.x;
+      setScrollTop(node.scrollTop);
+    }
+    zoomAnchor.current=null;layout.current={scale,width,offsets,id:doc.id};
+  },[scale,width,doc.id]);
+  // React's delegated wheel listener is passive in Chromium. A local non-passive
+  // listener is required to prevent the browser from zooming the entire UI.
+  const wheelCallback=useRef(props.onWheelZoom);wheelCallback.current=props.onWheelZoom;
+  useEffect(()=>{
+    const node=viewport.current;if(!node)return;
+    const wheel=(event:WheelEvent)=>{
+      if(!event.ctrlKey||event.deltaY===0)return;
+      event.preventDefault();
+      const rect=node.getBoundingClientRect();
+      const delta=event.deltaY*(event.deltaMode===1?16:event.deltaMode===2?node.clientHeight:1);
+      const factor=Math.exp(-Math.max(-120,Math.min(120,delta))*.001);
+      wheelCallback.current(factor,Math.max(0,Math.min(1,(event.clientX-rect.left)/node.clientWidth)),Math.max(0,Math.min(1,(event.clientY-rect.top)/node.clientHeight)));
+    };
+    node.addEventListener('wheel',wheel,{passive:false});
+    return()=>node.removeEventListener('wheel',wheel);
+  },[]);
   const begin=Math.max(0,indexAt(scrollTop)-1),end=Math.min(doc.pages.length-1,indexAt(scrollTop+height)+1);
   return <div className="reader-scroll" ref={viewport} data-reader={side} onScroll={()=>{
     const top=viewport.current!.scrollTop;setScrollTop(top);

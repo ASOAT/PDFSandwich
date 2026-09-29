@@ -1,6 +1,6 @@
 {
   "name": "pdfsandwich",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Windows bilingual PDF reader with synchronized annotations",
   "author": "PDFSandwich contributors",
@@ -39,10 +39,35 @@
     "appId": "io.pdfsandwich.desktop",
     "productName": "PDFSandwich",
     "electronDist": "node_modules/electron/dist",
-    "directories": { "output": "release" },
-    "files": ["dist/**/*", "electron/**/*", "package.json"],
-    "extraResources": [{ "from": "backend-dist/pdfsandwich-worker", "to": "backend", "filter": ["**/*"] }, {"from":"build-resources/licenses","to":"licenses"}],
-    "win": { "target": "nsis", "icon":"build-resources/icon.ico" },
-    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true }
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "backend-dist/pdfsandwich-worker",
+        "to": "backend",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "build-resources/licenses",
+        "to": "licenses"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build-resources/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    }
   }
 }

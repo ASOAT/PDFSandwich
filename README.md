@@ -4,8 +4,8 @@ Windows 中英对照 PDF 阅读与批注工具。默认使用免费的本地开�
 
 ## 使用
 
-本机构建的安装程序位于 `release/PDFSandwich Setup 0.1.0.exe`。也可以运行
-`release/win-unpacked/PDFSandwich.exe`；免安装版本需保留整个 `win-unpacked` 文件夹。
+本机构建的安装程序位于 `release/0.1.1/PDFSandwich Setup 0.1.1.exe`。也可以运行
+`release/0.1.1/win-unpacked/PDFSandwich.exe`；免安装版本需保留整个 `win-unpacked` 文件夹。
 安装版不需要安装 Python、Node.js 或配置 API Key。当前为未签名的个人使用版本。
 
 1. 打开或拖入可选中文字的英文 PDF。
@@ -36,6 +36,7 @@ Windows 中英对照 PDF 阅读与批注工具。默认使用免费的本地开�
 | --- | --- |
 | Ctrl+O / Ctrl+S | 打开 / 保存原 PDF |
 | Ctrl+F | 搜索英文原文 |
+| Ctrl + 滚轮 | 鼠标指向处放大/缩小，左右两侧均可操作 |
 | Ctrl++ / Ctrl+- / Ctrl+0 | 放大 / 缩小 / 适合页宽 |
 | Ctrl+Z / Ctrl+Shift+Z | 撤销 / 重做 |
 | 左右方向键 | 上一页 / 下一页 |

@@ -17,7 +17,9 @@ try{
   await page.screenshot({path:'test-results/welcome.png'});
   const file=path.join(root,'tmp/pdfs/reading-sample.pdf');
   await page.evaluate(file=>window.pdfsandwich.call('open',{path:file}),file);
-  await page.waitForFunction(()=>document.querySelectorAll('[data-side="en"] .textLayer span').length>10);
+  await page.getByRole('textbox',{name:'当前页码'}).fill('1');
+  await page.getByRole('textbox',{name:'当前页码'}).press('Enter');
+  await page.waitForFunction(()=>document.querySelector('[data-side="en"][data-page="1"] .textLayer')?.textContent.includes('Scientific knowledge'));
   await page.screenshot({path:'test-results/reader.png'});
   const state=await page.evaluate(()=>window.pdfsandwich.call('state'));
   const initialCount=state.doc.annotations.length;
