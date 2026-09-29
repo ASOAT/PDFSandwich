@@ -1,7 +1,6 @@
 """Persistent isolated PDF translation worker; credentials arrive on stdin."""
 import asyncio
 import contextlib
-import functools
 import json
 import logging
 import os
@@ -10,10 +9,7 @@ import shutil
 import sys
 import time
 
-_factory=None
-
 async def translate_request(request,send):
-    global _factory
     from text_engine import TextEngine
     from toc_layout import translate_contents
     started=time.perf_counter()
@@ -24,37 +20,30 @@ async def translate_request(request,send):
         toc=translate_contents(request['input'],temporary,engine.translate,
             lambda stage,progress:send({'type':'progress','progress':progress,'stage':stage}))
         if toc is None:
-            from pdf2zh_next.config.model import SettingsModel
-            from pdf2zh_next.config.translate_engine_model import GoogleSettings
-            from pdf2zh_next.translator import BaseTranslator,QPSRateLimiter
-            import pdf2zh_next.high_level as high_level
-            class Adapter(BaseTranslator):
-                name='pdfsandwich-v4'
-                model='guarded-text'
-                def do_translate(self,text,rate_limit_params=None):return engine.translate(text)
-            high_level.get_translator=lambda settings:Adapter(settings,QPSRateLimiter(100 if engine.local is not None else 2))
-            if _factory is None:
-                _factory=high_level.create_babeldoc_config
-                from babeldoc.docvision.base_doclayout import DocLayoutModel
-                DocLayoutModel.load_available=staticmethod(functools.cache(DocLayoutModel.load_available))
-            def clean_config(value,file):
-                clean=value.model_copy(deep=True);clean.basic.debug=False
-                return _factory(clean,file)
-            high_level.create_babeldoc_config=clean_config
-            settings=SettingsModel(translate_engine_settings=GoogleSettings())
-            settings.basic.debug=True
-            settings.translation.output=str(output.parent/'engine-output')
-            settings.translation.lang_in='en';settings.translation.lang_out='zh'
-            settings.translation.qps=100 if engine.local is not None else 2
-            settings.translation.pool_max_workers=2
-            settings.translation.no_auto_extract_glossary=True
-            settings.translation.ignore_cache=True
-            settings.pdf.no_dual=True;settings.pdf.watermark_output_mode='no_watermark'
-            settings.pdf.translate_table_text=False;settings.pdf.ocr_workaround=False
-            settings.pdf.auto_enable_ocr_workaround=False;settings.pdf.no_remove_non_formula_lines=True
-            settings.pdf.disable_rich_text_translate=True
+            send({'type':'progress','progress':0,'stage':'正在准备排版引擎（首次启动较慢）…'})
+            profile=None
+            if request.get('profileStartup'):
+                import cProfile
+                profile=cProfile.Profile();profile.enable()
+            from babeldoc.format.pdf.high_level import async_translate
+            from babeldoc.format.pdf.translation_config import TranslationConfig, WatermarkOutputMode
+            from layout_runtime import install, LayoutTranslator
+            install()
+            config=TranslationConfig(translator=LayoutTranslator(engine), input_file=Path(request['input']),
+                lang_in='en', lang_out='zh', doc_layout_model=None,
+                output_dir=str(output.parent/'engine-output'), debug=False, no_dual=True,
+                watermark_output_mode=WatermarkOutputMode.NoWatermark,
+                qps=100 if engine.local is not None else 2, pool_max_workers=2,
+                auto_extract_glossary=False, table_model=None, ocr_workaround=False,
+                auto_enable_ocr_workaround=False, remove_non_formula_lines=False,
+                disable_rich_text_translate=True, use_rich_pbar=False)
+            if profile:
+                import pstats
+                profile.disable()
+                with output.with_name('startup-profile.txt').open('w',encoding='utf-8') as stream:
+                    pstats.Stats(profile,stream=stream).sort_stats('cumulative').print_stats(50)
             last=None
-            async for event in high_level.do_translate_async_stream(settings,request['input']):
+            async for event in async_translate(config):
                 kind=event.get('type')
                 if kind in ('progress_start','progress_update','progress_end'):
                     progress=round(event.get('overall_progress',0),1);stage=event.get('stage','翻译中')

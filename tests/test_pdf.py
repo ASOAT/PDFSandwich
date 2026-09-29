@@ -48,7 +48,8 @@ def test_page_mapping_and_exact_quote(source,tmp_path):
     with pymupdf.open() as doc:
         page=doc.new_page();page.insert_text((50,80),'Knowledge develops by observing the world.',fontsize=12);doc.save(target)
     approximate=pdf_ops.map_annotation(source,target,mark())
-    assert approximate['accuracy']=='paragraph'
+    assert approximate['accuracy']=='unmatched'
+    assert approximate['geometry'] is None
     exact=pdf_ops.map_annotation(source,target,mark(),quote='observing the world')
     assert exact['accuracy']=='phrase'
     assert exact['geometry']['rects'][0][0]>100

@@ -5,16 +5,18 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 import time
 import pymupdf
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--book',required=True);parser.add_argument('--baseline',action='store_true');args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--book',required=True);parser.add_argument('--baseline',action='store_true');parser.add_argument('--repeat-body',action='store_true');args=parser.parse_args()
     root=Path(__file__).resolve().parents[1];folder=root/'tmp/quality-benchmark';folder.mkdir(parents=True,exist_ok=True)
     sys.path.insert(0,str(root/'backend'));from pdf_ops import extract_page
     before=hashlib.sha256(Path(args.book).read_bytes()).hexdigest()
     samples=[('contents',4),('body',18),('formulas',38)]
+    if args.repeat_body:samples.append(('body-warm',18))
     for name,index in samples:extract_page(args.book,index,str(folder/(name+'.pdf')))
     report=[]
     def run(child,label,name,number,engine):
@@ -29,6 +31,8 @@ def main():
             if event['type']=='finish':break
         else:raise RuntimeError('Translation worker exited early')
         item={'engine':label,'page':name,'seconds':round(time.perf_counter()-start,2),'warnings':event.get('warnings')}
+        for sidecar in ('alignment','quality'):
+            if (folder/(sidecar+'.json')).exists():shutil.copyfile(folder/(sidecar+'.json'),folder/f'{label}-{name}-{sidecar}.json')
         with pymupdf.open(output) as doc:
             item['characters']=len(doc[0].get_text());doc[0].get_pixmap(matrix=pymupdf.Matrix(1.5,1.5)).save(folder/f'{label}-{name}.png')
             (folder/f'{label}-{name}.txt').write_text(doc[0].get_text(),encoding='utf-8')

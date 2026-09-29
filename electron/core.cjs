@@ -1,6 +1,6 @@
 const crypto = require('node:crypto');
 function cacheKey(stamp, settings) {
-  return crypto.createHash('sha256').update(JSON.stringify({ stamp, provider: settings.provider || 'local', base: settings.provider === 'api' ? settings.baseUrl : '', model: settings.provider === 'api' ? settings.model : settings.localEngine || 'hy', glossary: settings.glossary || '', useGlossary: settings.useGlossary !== false, engine: 'pdf2zh-next-2.9.0', from: 'en', to: 'zh', version: 4 })).digest('hex').slice(0, 24);
+  return crypto.createHash('sha256').update(JSON.stringify({ stamp, provider: settings.provider || 'local', base: settings.provider === 'api' ? settings.baseUrl : '', model: settings.provider === 'api' ? settings.model : settings.localEngine || 'hy', glossary: settings.glossary || '', useGlossary: settings.useGlossary !== false, engine: 'pdf2zh-next-2.9.0', from: 'en', to: 'zh', version: 5 })).digest('hex').slice(0, 24);
 }
 function parseRange(header, size) {
   if (!header) return { start: 0, end: size - 1, partial: false };

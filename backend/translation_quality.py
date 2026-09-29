@@ -32,6 +32,7 @@ TERMS = {
     'screws': '螺旋', 'screw': '螺旋', 'tireless': '不知疲倦',
     'multifingered hands': '多指手',
     'properties of rotation matrices': '旋转矩阵的性质',
+    'cross product': '叉积', 'inner product': '内积', 'dot product': '点积',
 }
 
 def normalize(text):

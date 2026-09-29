@@ -71,3 +71,5 @@
 :root[data-theme="dark"] .connection-result{background:var(--soft);color:var(--accent)}
 :root[data-theme="dark"] .modal-backdrop{background:#070e10aa}
 @media(max-width:1150px){.toolbar{gap:6px}.toolbar-group{padding-right:8px;gap:3px}.tools{gap:5px}.pane-headings>div:last-child{padding-left:58px}.pane-headings>div{gap:6px}.translation-actions{gap:3px}.footer-right{font-size:10px}.reader-footer{padding:0 12px;font-size:10px}}
+.correction-banner{position:fixed;bottom:52px;left:50%;transform:translateX(-50%);z-index:25;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:14px 20px;box-shadow:0 5px 24px #0002;font-size:13px;display:flex;align-items:center;gap:20px}
+.correction-banner button,.correct-mark{color:var(--accent);font-size:11px;text-decoration:underline;text-underline-offset:3px}

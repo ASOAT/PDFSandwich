@@ -13,6 +13,7 @@ class TextEngine:
     def __init__(self,request,progress):
         self.cfg=request['settings'];self.force=request.get('force',False);self.local=None;self.records=[];self.warnings=[];self.errors=[];self.hits=0
         directory=Path(request['modelDir']);directory.mkdir(parents=True,exist_ok=True)
+        self.directory=directory;self.progress=progress
         engine=self.cfg.get('localEngine','hy')
         if self.cfg.get('provider','local')=='local':
             identity=(str(directory.resolve()),engine)
@@ -39,7 +40,7 @@ class TextEngine:
         with self.lock:
             row=self.memory.execute('SELECT value FROM translations WHERE key=?',(key,)).fetchone()
             if row and not self.force:
-                saved=json.loads(row[0]);self.records.extend(saved['records']);self.hits+=1;return saved['text']
+                saved=json.loads(row[0]);self.records.extend(saved['records'] or [self.alignment(source,saved['text'])]);self.hits+=1;return saved['text']
             previous=len(self.local.records) if self.local is not None else 0
             try:
                 if self.local is not None:
@@ -61,11 +62,18 @@ class TextEngine:
                 self.errors.append(str(error)[:200])
                 raise
             records=self.local.records[previous:] if self.local is not None else []
+            if not records:records=[self.alignment(source,output)]
             self.records.extend(records)
             self.memory.execute('INSERT OR REPLACE INTO translations VALUES (?,?)',(key,json.dumps({'text':output,'records':records},ensure_ascii=False)));self.memory.commit()
             return output
 
+    def alignment(self,source,target):
+        from translation_quality import matching_terms
+        return {'source':source,'target':target,'terms':matching_terms(source,self.cfg.get('glossary',''),self.cfg.get('useGlossary',True))}
+
     def close(self):self.memory.close()
 
     def save_alignment(self,file):
+        from alignment import make_record
+        self.records=[record if 'links' in record else make_record(record['source'],record['target'],self.directory,self.progress,self.cfg.get('glossary',''),self.cfg.get('useGlossary',True)) for record in self.records]
         Path(file).write_text(json.dumps(self.records,ensure_ascii=False),encoding='utf-8')

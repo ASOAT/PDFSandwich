@@ -34,6 +34,13 @@ training data. Model package metadata and included notices stay with the downloa
 BabelDOC downloads its layout model and fonts into the user's local cache. Those
 assets have their own upstream terms. They are not committed to this repository.
 
+The local build applies two import substitutions to BabelDOC 0.6.2, recorded in
+`scripts/patch-layout.py`: glyph radius clustering (DBSCAN, min_samples=1) and
+default grayscale SSIM use `backend/pdfsandwich_layout_math.py`. This removes
+unused scientific-library initialization; layout and scan-detection behavior are
+checked against the upstream numerical implementations. The pinned dependency
+retains its AGPL license and its source files are included by the backend build.
+
 The build collects available dependency license/notice files and an installed
 dependency inventory under `resources/licenses`. Electron's own LICENSE and
 Chromium notice files also remain in the distribution. The inventory includes

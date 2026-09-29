@@ -23,9 +23,11 @@ function PdfPage({ doc, side, page: index, scale, info, tool, color, marks, matc
       pdfPage = page;
       if (cancelled || !canvas.current || !text.current) { page.cleanup(); return; }
       const viewport = page.getViewport({ scale, rotation: info.rotation });
-      const ratio = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(12000000 / (viewport.width*viewport.height)));
+      // Supersample even at Windows' 100% scaling. The cap is per visible page;
+      // virtualization keeps a large book from allocating a canvas per page.
+      const ratio = Math.min(Math.max(2, window.devicePixelRatio || 1), 3, Math.sqrt(16000000 / (viewport.width*viewport.height)));
       const node = canvas.current;
-      node.width = Math.floor(viewport.width*ratio); node.height = Math.floor(viewport.height*ratio);
+      node.width = Math.ceil(viewport.width*ratio); node.height = Math.ceil(viewport.height*ratio);
       node.style.width = `${viewport.width}px`; node.style.height = `${viewport.height}px`;
       const task = page.render({ canvas: node, viewport, transform: [ratio,0,0,ratio,0,0], annotationMode: AnnotationMode.DISABLE }); renderTask = task;
       const container = text.current; container.replaceChildren();

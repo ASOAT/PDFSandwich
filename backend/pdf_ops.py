@@ -207,6 +207,12 @@ def map_annotation(source_path, target_path, item, quote=None):
     with require_pdf(source_path) as src, require_pdf(target_path) as dst:
         page = src[source_index]
         counterpart = dst[target_index]
+        alignment = Path(target_path if origin == "en" else source_path).with_name("alignment.json")
+        if not quote and alignment.exists():
+            from annotation_alignment import map_records
+            mapped = map_records(page, counterpart, item, json.loads(alignment.read_text(encoding="utf-8")))
+            if mapped:
+                return mapped
         selected = union(geo["rects"])
         src_blocks = [b for b in page.get_text("blocks") if b[6] == 0]
         src_block = max(src_blocks, key=lambda b: (fitz.Rect(b[:4]) & selected).get_area(), default=None)
@@ -221,18 +227,11 @@ def map_annotation(source_path, target_path, item, quote=None):
         if not block:
             return {"geometry": None, "accuracy": "unmatched", "targetText": ""}
         clip = fitz.Rect(block[:4]) + (-2, -2, 2, 2)
-        if not quote:
-            alignment = Path(target_path if origin == "en" else source_path).with_name("alignment.json")
-            if alignment.exists():
-                from local_model import aligned_quote
-                quote = aligned_quote(json.loads(alignment.read_text(encoding="utf-8")), item.get("selectedText", ""), origin)
         if quote:
             hits = counterpart.search_for(quote, clip=clip, quads=True)
             if hits:
                 return {"geometry": {"rects": [rect_list(q.rect) for q in hits]}, "accuracy": "phrase"}
-        lines = counterpart.get_text("dict", clip=clip).get("blocks", [])
-        boxes = [rect_list(line["bbox"]) for b in lines if b.get("type") == 0 for line in b.get("lines", [])]
-        return {"geometry": {"rects": boxes or [rect_list(block[:4])]}, "accuracy": "paragraph",
+        return {"geometry": None, "accuracy": "unmatched",
                 "sourceText": src_block[4] if src_block else page.get_textbox(selected),
                 "targetText": block[4], "selectedText": item.get("selectedText") or " ".join(page.get_textbox(fitz.Rect(r)) for r in geo["rects"])}
 
