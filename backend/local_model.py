@@ -11,6 +11,7 @@ import threading
 import urllib.request
 import uuid
 import zipfile
+from translation_quality import translation_problem
 
 MODEL_URL = "https://data.argosopentech.com/argospm/v1/translate-en_zh-1_9.argosmodel"
 MODEL_VERSION = "argos-en-zh-1.9"
@@ -92,9 +93,9 @@ class LocalModel:
                     output = self.decode(target)
                     # Fragmented captions can trigger subtitle-format hallucinations
                     # in the small model. Preserve the source fragment in that case.
-                    if re.search(r"\{\\[a-z]", output) or len(output) > max(80, len(sentence)*4):
-                        translated.append(self.decode(part))
-                        continue
+                    problem = translation_problem(self.decode(part), output)
+                    if problem:
+                        raise ValueError(problem)
                     translated.append(output)
                     def spans(items):
                         ends = [len(self.decode(items[:i])) for i in range(len(items)+1)]

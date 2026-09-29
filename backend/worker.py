@@ -26,8 +26,8 @@ def main():
 if __name__ == "__main__":
     import multiprocessing
     multiprocessing.freeze_support()
-    if "--translate" in sys.argv:
+    if "--translate" in sys.argv or "--translate-server" in sys.argv:
         import translate
-        translate.main()
+        translate.main("--translate-server" in sys.argv)
     else:
         main()

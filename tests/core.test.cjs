@@ -21,6 +21,13 @@ test('provider settings permit localhost but reject remote plaintext credentials
   assert.throws(()=>validSettings({baseUrl:'https://user:secret@example.com',model:'x'}));
   assert.throws(()=>validSettings({baseUrl:'https://example.com',model:''}));
 });
+test('translation cache changes with quality engine and glossary but never credentials',()=>{
+  const cfg={provider:'local',localEngine:'hy',glossary:'twist = 运动旋量'};
+  assert.notEqual(cacheKey('v',cfg),cacheKey('v',{...cfg,localEngine:'argos'}));
+  assert.notEqual(cacheKey('v',cfg),cacheKey('v',{...cfg,glossary:'twist = 扭量'}));
+  assert.notEqual(cacheKey('v',cfg),cacheKey('v',{...cfg,useGlossary:false}));
+  assert.throws(()=>validSettings({baseUrl:'https://example.com',model:'x',glossary:'invalid'}));
+});
 test('reading position restores legacy drafts and bounds invalid values',()=>{
   assert.deepEqual(readingPosition({page:4},6),{page:4,fraction:0,zoom:1});
   assert.deepEqual(readingPosition({page:2,fraction:.42,zoom:1.5},6),{page:2,fraction:.42,zoom:1.5});

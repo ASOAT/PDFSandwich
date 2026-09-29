@@ -15,6 +15,15 @@ granted a public project license. This does not change any third-party license.
 | CTranslate2 | 4.8.2 | https://github.com/OpenNMT/CTranslate2 — MIT |
 | SentencePiece | 0.2.2 | https://github.com/google/sentencepiece — Apache-2.0 |
 | ONNX Runtime | pinned in backend lock | https://github.com/microsoft/onnxruntime — MIT |
+| HY-MT translation weights | 1.5, 1.8B Q4_K_M | https://huggingface.co/tencent/HY-MT1.5-1.8B-GGUF — Tencent HY Community License (open weights with use/territory restrictions, not an OSI license) |
+| llama.cpp Vulkan runtime | b11243 Windows x64 | https://github.com/ggml-org/llama.cpp — MIT |
+
+The HY model and runtime are fetched from pinned official URLs and checked with
+SHA-256 before use. Model SHA-256:
+`4383ac0c3c8e476de98ff979c2a3f069f8c4fb385e7860cf2d28da896cc477c7`.
+The original model agreement and notice are in `licenses/` and included in
+`resources/licenses/models/`. The model has not been fine-tuned or modified by
+this project. It is downloaded separately, not included in the installer.
 
 The offline en→zh language package is downloaded on first use from the official
 Argos distribution: https://data.argosopentech.com/argospm/v1/translate-en_zh-1_9.argosmodel

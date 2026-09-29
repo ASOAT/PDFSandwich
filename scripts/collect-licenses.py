@@ -28,3 +28,5 @@ for folder in folders:
 (destination/'inventory.json').write_text(json.dumps(inventory,ensure_ascii=False,indent=2),encoding='utf-8')
 shutil.copyfile(root/'THIRD_PARTY_NOTICES.md',destination/'THIRD_PARTY_NOTICES.md')
 print(f'Collected notices for {len(inventory)} installed build/runtime dependencies.')
+
+shutil.copytree(root/'licenses',destination/'models',dirs_exist_ok=True)

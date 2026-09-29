@@ -7,12 +7,14 @@ const { Readable } = require('node:stream');
 const readline = require('node:readline');
 const crypto = require('node:crypto');
 const { cacheKey, parseRange, validSettings, readingPosition, PageQueue } = require('./core.cjs');
+const { TranslationWorker } = require('./translation-worker.cjs');
 protocol.registerSchemesAsPrivileged([{ scheme: 'pdfsandwich', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }]);
 if (process.env.PDFSANDWICH_DATA_DIR) app.setPath('userData', path.resolve(process.env.PDFSANDWICH_DATA_DIR));
 const root = path.join(__dirname, '..');
-let win, worker, translateProcess, seq = 0, doc = null, busy = false, stopping = false, savePromise = null;
+let win, worker, seq = 0, doc = null, busy = false, stopping = false, savePromise = null;
 const queue = new PageQueue();
-let settings = { provider: 'local', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', autoTranslate: true }, apiKey = '', recent = [];
+const retranslatePages = new Set();
+let settings = { provider: 'local', localEngine: 'hy', useGlossary: true, glossary: '', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', autoTranslate: true }, apiKey = '', recent = [];
 const pending = new Map(), files = new Map(), mappingTasks = new Set();
 let history = [], future = [], generation = 0, autoPaused = false;
 const userDir = () => app.getPath('userData');
@@ -20,6 +22,7 @@ const docDir = () => path.join(userDir(), 'documents', doc.id);
 const draftPath = () => path.join(docDir(), 'draft.json');
 const stageLabels = {'Parse PDF and Create Intermediate Representation':'读取页面文字与图形','DetectScannedFile':'检查文字层','Parse Page Layout':'识别页面布局','Parse Paragraphs':'整理正文段落','Parse Formulas and Styles':'保留公式与样式','Translate Paragraphs':'在翻译引擎中处理正文','Typesetting':'排版中文正文','Add Fonts':'准备中文字体','Generate drawing instructions':'生成中文页面','Subset font':'整理页面字体','Save PDF':'保存中文 PDF'};
 const redact = value => String(value).replaceAll(apiKey || '\0', '[redacted]');
+const translator = new TranslationWorker(() => backendCommand('--translate-server'), redact);
 
 function backendCommand(mode = '') {
   if (app.isPackaged) return { exe: path.join(process.resourcesPath, 'backend', 'pdfsandwich-worker.exe'), args: mode ? [mode] : [] };
@@ -49,7 +52,7 @@ function urlFor(file) { const id = crypto.randomUUID(); files.set(id, file); ret
 function publicSettings() { return { ...settings, hasKey: Boolean(apiKey) }; }
 function state() { return { doc, settings: publicSettings(), recent, canUndo: history.length > 0, canRedo: future.length > 0, queued: queue.length, translating: busy }; }
 function emit() { if (win && !win.isDestroyed()) win.webContents.send('pdfsandwich:state', state()); }
-function persist() { if (doc) jsonWrite(draftPath(), { stamp: doc.stamp, annotations: doc.annotations, dirty: doc.dirty, cacheVersion: doc.cacheVersion, translator: cacheKey(null, settings), translations: Object.fromEntries(Object.entries(doc.translations).filter(([,v]) => v.status === 'ready').map(([k,v]) => [k, { path: v.path, status: 'ready' }])), page: doc.currentPage, fraction: doc.currentFraction, zoom: doc.viewZoom }); }
+function persist() { if (doc) jsonWrite(draftPath(), { stamp: doc.stamp, annotations: doc.annotations, dirty: doc.dirty, cacheVersion: doc.cacheVersion, translator: cacheKey(null, settings), translations: Object.fromEntries(Object.entries(doc.translations).filter(([,v]) => v.status === 'ready').map(([k,v]) => [k, { path: v.path, status: 'ready', warnings: v.warnings || 0, seconds: v.seconds }])), page: doc.currentPage, fraction: doc.currentFraction, zoom: doc.viewZoom }); }
 function remember() { history.push(structuredClone(doc.annotations)); if (history.length > 60) history.shift(); future = []; }
 function changed() { doc.dirty = true; persist(); emit(); }
 
@@ -76,8 +79,8 @@ async function mayLeave() {
   return true;
 }
 function stopTranslation() {
-  generation++; queue.clear();
-  if (translateProcess) { spawn('taskkill', ['/pid', String(translateProcess.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); translateProcess = null; }
+  generation++; queue.clear(); retranslatePages.clear();
+  translator.stop();
   if (doc) for (const item of Object.values(doc.translations)) if (item.status === 'queued' || item.status === 'translating') { item.status = 'idle'; item.progress = 0; }
   busy = false; emit();
 }
@@ -147,6 +150,7 @@ function enqueue(pages, prioritize = true, automatic = false) {
 async function pump() {
   if (busy || !queue.length || !doc) return;
   busy = true; const version = generation, current = doc, index = queue.shift();
+  const force = retranslatePages.delete(index);
   const dir = path.join(docDir(), 'translations', current.cacheVersion, String(index)); fs.mkdirSync(dir, { recursive: true });
   const input = path.join(dir, 'source.pdf'), output = path.join(dir, 'zh.pdf');
   current.translations[index] = { status: 'translating', progress: 0, stage: '准备页面与翻译模型（首次使用需下载资源）' }; emit();
@@ -154,22 +158,14 @@ async function pump() {
     if (settings.provider === 'api' && !apiKey && new URL(settings.baseUrl).protocol !== 'http:') throw new Error('请先配置翻译服务密钥。');
     await python('extract_page', { path: current.path, index, output: input });
     if (version !== generation) return;
-    await new Promise((resolve, reject) => {
-      const command = backendCommand('--translate');
-      const child = spawn(command.exe, command.args, { cwd: dir, windowsHide: true, env: { ...process.env, PYTHONIOENCODING: 'utf-8' } }); translateProcess = child;
-      let finished = false, errorText = '', diagnostic = '';
-      const timer = setTimeout(() => { spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); reject(new Error('翻译超时，请检查网络后重试。')); }, 15 * 60 * 1000);
-      child.stderr.on('data', data => { diagnostic = (diagnostic + redact(data.toString())).slice(-2500); });
-      readline.createInterface({ input: child.stdout }).on('line', line => { try { const event = JSON.parse(line); if (event.type === 'finish') finished = true; if (event.type === 'error') errorText = redact(event.error); if (event.type === 'progress' && version === generation) { Object.assign(current.translations[index], { progress: event.progress, stage: stageLabels[event.stage] || event.stage }); emit(); } } catch {} });
-      child.on('error', error => { clearTimeout(timer); reject(error); });
-      child.on('exit', code => { clearTimeout(timer); finished && code === 0 ? resolve() : reject(new Error(errorText || (code ? `翻译进程退出 (${code})。${diagnostic.slice(-600)}` : '翻译已取消。'))); });
-      child.stdin.end(JSON.stringify({ input, output, modelDir: path.join(userDir(), 'models'), settings: { ...settings, apiKey: settings.provider === 'api' ? apiKey : '' } }) + '\n');
+    const result = await translator.run({ input, output, force, modelDir: path.join(userDir(), 'models'), settings: { ...settings, apiKey: settings.provider === 'api' ? apiKey : '' } }, userDir(), event => {
+      if (version === generation) { Object.assign(current.translations[index], { progress: event.progress, stage: stageLabels[event.stage] || event.stage }); emit(); }
     });
     if (version !== generation) return;
-    current.translations[index] = { status: 'ready', progress: 100, path: output, url: urlFor(output) }; persist(); emit();
+    current.translations[index] = { status: 'ready', progress: 100, path: output, url: urlFor(output), warnings: result.warnings || 0, seconds: result.seconds }; persist(); emit();
     for (const item of current.annotations.filter(a => a.page === index)) scheduleMap(item.id);
   } catch (error) { if (version === generation) { current.translations[index] = { status: 'error', progress: 0, error: redact(error.message) }; emit(); } }
-  finally { if (version === generation) { busy = false; translateProcess = null; emit(); pump(); } }
+  finally { if (version === generation) { busy = false; emit(); pump(); } }
 }
 
 const actions = {
@@ -182,9 +178,10 @@ const actions = {
     doc.currentPage = position.page; doc.currentFraction = position.fraction; doc.viewZoom = position.zoom;
     persist(); if (settings.autoTranslate && !autoPaused) enqueue([page, page+1, page-1], true, true);
   },
-  translate: ({ all, page }) => {
+  translate: ({ all, page, force }) => {
     if (!doc) return; autoPaused = false; const current = page ?? doc.currentPage;
-    enqueue(all ? [current, current+1, current-1, ...Array.from({ length: doc.pages.length }, (_,i) => i)] : [current, current+1], true);
+    if (force && Number.isInteger(current) && current >= 0 && current < doc.pages.length && doc.translations[current]?.status !== 'translating') { retranslatePages.add(current); delete doc.translations[current]; }
+    enqueue(all ? [current, current+1, current-1, ...Array.from({ length: doc.pages.length }, (_,i) => i)] : force ? [current] : [current, current+1], true);
   },
   stop: () => { autoPaused = true; stopTranslation(); },
   annotate: async ({ item }) => {
@@ -197,8 +194,8 @@ const actions = {
   undo: () => { if (!doc || !history.length || savePromise) return; future.push(structuredClone(doc.annotations)); doc.annotations = history.pop(); changed(); for (const item of doc.annotations) scheduleMap(item.id); },
   redo: () => { if (!doc || !future.length || savePromise) return; history.push(structuredClone(doc.annotations)); doc.annotations = future.pop(); changed(); for (const item of doc.annotations) scheduleMap(item.id); },
   search: ({ query, start }) => { if (!doc) return { matches: [], next: null }; return python('search', { path: doc.path, query: String(query).slice(0, 300), start: Math.max(0, Number(start) || 0) }); },
-  settings: ({ provider, baseUrl, model, key, autoTranslate }) => {
-    const next = validSettings({ provider, baseUrl, model, autoTranslate });
+  settings: ({ provider, baseUrl, model, key, autoTranslate, localEngine, useGlossary, glossary }) => {
+    const next = validSettings({ provider, baseUrl, model, autoTranslate, localEngine, useGlossary, glossary });
     const different = cacheKey(null, settings) !== cacheKey(null, next);
     // A credential is never silently forwarded to a newly selected provider.
     if (different && settings.baseUrl !== next.baseUrl && !key) apiKey = '';
@@ -224,7 +221,7 @@ const actions = {
 
 app.whenReady().then(() => {
   const stored = readJson(path.join(userDir(), 'settings.json'), {});
-  settings = { ...settings, ...Object.fromEntries(Object.entries(stored).filter(([k]) => ['provider','baseUrl','model','autoTranslate'].includes(k))) };
+  settings = { ...settings, ...Object.fromEntries(Object.entries(stored).filter(([k]) => ['provider','baseUrl','model','autoTranslate','localEngine','useGlossary','glossary'].includes(k))) };
   try { apiKey = stored.secret ? safeStorage.decryptString(Buffer.from(stored.secret, 'base64')) : ''; } catch { apiKey = ''; }
   recent = readJson(path.join(userDir(), 'recent.json'), []);
   protocol.handle('pdfsandwich', async request => {

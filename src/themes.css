@@ -44,6 +44,10 @@
 .recent-icon,.floating-sync{background:var(--soft);color:var(--accent);border-color:var(--border)}
 .floating-sync{font-size:12px}
 .settings-modal{width:560px;padding:30px 32px}.modal-title h2{color:var(--text)}
+.settings-modal select,.glossary-input{display:block;width:100%;margin-top:8px;padding:9px 10px;border:1px solid var(--border);border-radius:6px;background:var(--input);color:var(--text);font:inherit}
+.glossary-input{resize:vertical;line-height:1.7;min-height:80px}.local-model-card label{display:block;margin-top:14px;font-size:12px}
+.settings-modal .modal-actions{position:sticky;bottom:0;background:var(--card);padding:14px 0 0;margin-top:16px;border-top:1px solid var(--border);z-index:1}
+.translation-quality{padding:8px 18px;background:var(--card);border-bottom:1px solid var(--border);color:var(--muted);font-size:12px;line-height:1.6}.translation-quality[hidden]{display:none}
 .modal-description{font-size:13px;color:var(--muted);line-height:1.8}
 .provider-cards{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:23px 0}
 .provider-cards>button{position:relative;display:flex;flex-direction:column;align-items:flex-start;padding:17px 16px;gap:11px;background:var(--surface);border:1px solid var(--border);border-radius:10px;text-align:left;color:var(--muted)}

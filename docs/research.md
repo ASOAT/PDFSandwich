@@ -53,3 +53,13 @@ Ollama 兼容端点可选用用户自行安装的大模型；本项目没有自�
 未修改已安装的第三方源码。升级 pdf2zh-next 或 BabelDOC 时，必须重跑真实 PDF 与打包测试。
 
 发布与依赖许可见仓库根目录 THIRD_PARTY_NOTICES.md。
+
+## 2026-09-29：质量与速度更新
+
+采用 [Tencent 官方 HY-MT 1.5 1.8B GGUF](https://huggingface.co/tencent/HY-MT1.5-1.8B-GGUF) 的 Q4_K_M 文件，固定仓库 revision `265b2e615a7dc9b06c435dc878829ad99a512ba2`。官方说明支持术语提示；本项目添加按输入内容筛选的计算机与机器人学术语，并允许用户覆盖。此模型是附条件开放权重，完整 Tencent HY Community License 和 Notice 随软件提供。
+
+[llama.cpp](https://github.com/ggml-org/llama.cpp/releases/tag/b11243) 的官方 Windows Vulkan 运行时可使用本机已有显卡驱动，不需要额外安装 CUDA。固定压缩包摘要 `147f88e011cb04cbaea45917b6f5f639b76c53d3b15e3e077d1458963af61b25`。使用回环地址和每次启动随机密钥，文档文字不发往云端。模型、排版进程复用以减少逐页冷启动。
+
+[Gemini 官方价格页](https://ai.google.dev/gemini-api/docs/pricing) 当日列出 2.5 Flash-Lite 免费层；[兼容接口文档](https://ai.google.dev/gemini-api/docs/openai) 提供 OpenAI 风格端点。本项目仅提供填写预设，需要用户自己的 Google AI Studio 密钥；免费层有地区/配额限制，数据可能用于改进服务，不保证已开计费的项目仍免费。
+
+具体逐页耗时、目录修复和质量局限见 verification.md；没有把厂商评测直接当作本软件的准确率。

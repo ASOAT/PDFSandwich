@@ -1,6 +1,6 @@
 const crypto = require('node:crypto');
 function cacheKey(stamp, settings) {
-  return crypto.createHash('sha256').update(JSON.stringify({ stamp, provider: settings.provider || 'local', base: settings.provider === 'api' ? settings.baseUrl : '', model: settings.provider === 'api' ? settings.model : 'argos-en-zh-1.9', engine: 'pdf2zh-next-2.9.0', from: 'en', to: 'zh', version: 3 })).digest('hex').slice(0, 24);
+  return crypto.createHash('sha256').update(JSON.stringify({ stamp, provider: settings.provider || 'local', base: settings.provider === 'api' ? settings.baseUrl : '', model: settings.provider === 'api' ? settings.model : settings.localEngine || 'hy', glossary: settings.glossary || '', useGlossary: settings.useGlossary !== false, engine: 'pdf2zh-next-2.9.0', from: 'en', to: 'zh', version: 4 })).digest('hex').slice(0, 24);
 }
 function parseRange(header, size) {
   if (!header) return { start: 0, end: size - 1, partial: false };
@@ -18,7 +18,11 @@ function validSettings(value) {
   if (url.username || url.password || url.search || url.hash) throw new Error('服务地址不能包含密码、查询参数或片段。');
   if (typeof value.model !== 'string' || !value.model.trim()) throw new Error('请输入模型名称。');
   if (value.provider && !['local','api'].includes(value.provider)) throw new Error('未知翻译方式。');
-  return { provider: value.provider || 'local', baseUrl: url.href.replace(/\/$/, '').replace(/\/chat\/completions$/, ''), model: value.model.trim(), autoTranslate: Boolean(value.autoTranslate) };
+  if (value.localEngine && !['hy','argos'].includes(value.localEngine)) throw new Error('未知本地翻译引擎。');
+  const glossary = String(value.glossary || '').trim();
+  if (glossary.length > 20000 || glossary.split('\n').length > 200) throw new Error('自定义术语最多 200 行、20,000 字符。');
+  if (glossary.split('\n').filter(line => line.trim()).some(line => { const split = line.indexOf('='); return split < 1 || [line.slice(0,split).trim(),line.slice(split+1).trim()].some(part => !part || part.length>120); })) throw new Error('术语表请按每行“英文 = 中文”填写，原文和译文各不超过 120 个字符。');
+  return { provider: value.provider || 'local', localEngine: value.localEngine || 'hy', useGlossary: value.useGlossary !== false, glossary, baseUrl: url.href.replace(/\/$/, '').replace(/\/chat\/completions$/, ''), model: value.model.trim(), autoTranslate: Boolean(value.autoTranslate) };
 }
 function readingPosition(value, pageCount) {
   return {
