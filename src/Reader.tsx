@@ -132,8 +132,8 @@ export const Reader = forwardRef<ReaderHandle, Props>((props, ref) => {
       <div className="page-number">{page+1} <span>/ {doc.pages.length}</span></div>
       {ready?<PdfPage {...props} page={page} info={info} scale={scale} marks={props.marks.filter(m=>m.page===page)} matches={side==='en'?props.matches.filter(m=>m.page===page):[]}/>:<div className="translation-placeholder" style={{height:h*scale}}>
         <div className={`placeholder-icon ${translation?.status==='translating'?'active':''}`}>{translation?.status==='translating'?<LoaderCircle className="spin" size={25}/>:<Languages size={25}/>}</div>
-        <h3>{translation?.status==='error'?'这一页暂未译好':translation?.status==='translating'?'正在生成中文页面':translation?.status==='queued'?'已加入翻译队列':'阅读到这里，再开始翻译'}</h3>
-        <p>{translation?.status==='error'?translation.error:translation?.status==='translating'?translation.stage:'译文会保留原页码、图片与公式。'}</p>
+        <h3>{translation?.status==='error'?'这一页暂未译好':translation?.status==='translating'?'正在生成中文页面':translation?.status==='queued'?(page===doc.currentPage?'优先翻译当前页':'等待预取此页'):'阅读到这里，自动翻译'}</h3>
+        <p>{translation?.status==='error'?translation.error:translation?.stage||'当前阅读页优先，随后预取邻页；保留图片与公式。'}</p>
         {translation?.status==='translating'?<><div className="progress-track"><i style={{width:`${Math.max(3,translation.progress)}%`}}/></div><small>{Math.round(translation.progress)}%</small></>:<button className="button secondary" onClick={()=>onTranslate(page)}>{translation?.status==='error'?<RotateCcw size={15}/>:<Languages size={15}/>} {translation?.status==='queued'?'优先翻译此页':translation?.status==='error'?'重试此页':'翻译此页及下一页'}</button>}
       </div>}
     </div>;})}

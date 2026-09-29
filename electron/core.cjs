@@ -46,6 +46,7 @@ class PageQueue {
     return dropped;
   }
   shift() { const page = this.items.shift(); this.explicit.delete(page); return page; }
+  requeue(page, explicit = false) { if (!this.items.includes(page)) this.items.push(page); if (explicit) this.explicit.add(page); }
   clear() { this.items = []; this.explicit.clear(); }
 }
 module.exports = { cacheKey, parseRange, validSettings, readingPosition, PageQueue };

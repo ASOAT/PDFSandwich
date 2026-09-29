@@ -52,3 +52,13 @@ test('automatic priority preserves requested pages and whole-book work without d
   assert.equal(queue.length,3);
   queue.clear();assert.equal(queue.length,0);assert.equal(queue.explicit.size,0);
 });
+
+test('interrupted whole-book page resumes behind the latest visible page',()=>{
+  const queue=new PageQueue();queue.add([0,1,2,3,4,5,6]);
+  const explicit=queue.explicit.has(0);assert.equal(queue.shift(),0);
+  queue.add([4,5,3],{automatic:true});queue.requeue(0,explicit);
+  queue.add([6,5],{automatic:true});
+  assert.deepEqual(queue.items,[6,5,4,3,1,2,0]);
+  assert.equal(queue.explicit.has(0),true);
+  assert.equal(new Set(queue.items).size,queue.length);
+});

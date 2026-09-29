@@ -17,6 +17,7 @@ const retranslatePages = new Set();
 let settings = { provider: 'local', localEngine: 'hy', useGlossary: true, glossary: '', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', autoTranslate: true }, apiKey = '', recent = [];
 const pending = new Map(), files = new Map(), mappingTasks = new Set();
 let history = [], future = [], generation = 0, autoPaused = false;
+let activePage = null, priorityPage = 0, wholeBookActive = false;
 const userDir = () => app.getPath('userData');
 const docDir = () => path.join(userDir(), 'documents', doc.id);
 const draftPath = () => path.join(docDir(), 'draft.json');
@@ -52,7 +53,7 @@ function urlFor(file) { const id = crypto.randomUUID(); files.set(id, file); ret
 function publicSettings() { return { ...settings, hasKey: Boolean(apiKey) }; }
 function state() { return { doc, settings: publicSettings(), recent, canUndo: history.length > 0, canRedo: future.length > 0, queued: queue.length, translating: busy }; }
 function emit() { if (win && !win.isDestroyed()) win.webContents.send('pdfsandwich:state', state()); }
-function persist() { if (doc) jsonWrite(draftPath(), { stamp: doc.stamp, annotations: doc.annotations, dirty: doc.dirty, cacheVersion: doc.cacheVersion, translator: cacheKey(null, settings), translations: Object.fromEntries(Object.entries(doc.translations).filter(([,v]) => v.status === 'ready').map(([k,v]) => [k, { path: v.path, status: 'ready', warnings: v.warnings || 0, seconds: v.seconds }])), page: doc.currentPage, fraction: doc.currentFraction, zoom: doc.viewZoom }); }
+function persist() { if (doc) jsonWrite(draftPath(), { stamp: doc.stamp, annotations: doc.annotations, dirty: doc.dirty, cacheVersion: doc.cacheVersion, translator: cacheKey(null, settings), translations: Object.fromEntries(Object.entries(doc.translations).filter(([,v]) => v.status === 'ready').map(([k,v]) => [k, { path: v.path, status: 'ready', warnings: v.warnings || 0, seconds: v.seconds, qualityVersion: v.qualityVersion || 5 }])), page: doc.currentPage, fraction: doc.currentFraction, zoom: doc.viewZoom }); }
 function remember() { history.push(structuredClone(doc.annotations)); if (history.length > 60) history.shift(); future = []; }
 function changed() { doc.dirty = true; persist(); emit(); }
 
@@ -80,9 +81,11 @@ async function mayLeave() {
 }
 function stopTranslation() {
   generation++; queue.clear(); retranslatePages.clear();
-  translator.stop();
+  activePage = null; wholeBookActive = false;
+  const stopped = translator.stop();
   if (doc) for (const item of Object.values(doc.translations)) if (item.status === 'queued' || item.status === 'translating') { item.status = 'idle'; item.progress = 0; }
   busy = false; emit();
+  return stopped;
 }
 async function openDocument(file) {
   if (!await mayLeave()) return null;
@@ -100,9 +103,10 @@ async function openDocument(file) {
     // Keep the translation namespace across annotation-only saves; source content is unchanged.
     if (saved.translator === cacheKey(null, settings)) {
       doc.cacheVersion = saved.cacheVersion || doc.cacheVersion;
-      for (const [page, item] of Object.entries(saved.translations || {})) if (fs.existsSync(item.path)) doc.translations[page] = { ...item, url: urlFor(item.path), progress: 100 };
+      for (const [page, item] of Object.entries(saved.translations || {})) if (fs.existsSync(item.path) && !(item.warnings > 0 && (item.qualityVersion || 5) < 6)) doc.translations[page] = { ...item, url: urlFor(item.path), progress: 100 };
     }
   }
+  priorityPage = doc.currentPage;
   recent = [{ path: file, name: doc.name, pages: doc.pages.length, openedAt: Date.now() }, ...recent.filter(x => x.path !== file)].slice(0, 12);
   jsonWrite(path.join(userDir(), 'recent.json'), recent); persist(); emit(); return state();
 }
@@ -147,25 +151,46 @@ function enqueue(pages, prioritize = true, automatic = false) {
   for (const p of list) doc.translations[p] = { status: 'queued', progress: 0 };
   emit(); pump();
 }
+function prioritizePage(page) {
+  if (!activePage || activePage.current !== doc || activePage.index === page || doc.translations[page]?.status !== 'queued') return;
+  activePage.cancelRequested = true;
+  doc.translations[page].stage = '正在切换到此页，已完成的句段会保留。';
+  translator.cancel(); emit();
+}
 async function pump() {
-  if (busy || !queue.length || !doc) return;
+  if (busy || !doc) return;
+  if (!queue.length) { wholeBookActive = false; return; }
+  const explicit = queue.explicit.has(queue.items[0]);
   busy = true; const version = generation, current = doc, index = queue.shift();
   const force = retranslatePages.delete(index);
+  const task = { current, index, explicit, force, cancelRequested: false }; activePage = task;
   const dir = path.join(docDir(), 'translations', current.cacheVersion, String(index)); fs.mkdirSync(dir, { recursive: true });
   const input = path.join(dir, 'source.pdf'), output = path.join(dir, 'zh.pdf');
   current.translations[index] = { status: 'translating', progress: 0, stage: '准备页面与翻译模型（首次使用需下载资源）' }; emit();
   try {
     if (settings.provider === 'api' && !apiKey && new URL(settings.baseUrl).protocol !== 'http:') throw new Error('请先配置翻译服务密钥。');
-    await python('extract_page', { path: current.path, index, output: input });
+    // The input belongs to an immutable content/cache namespace. Reuse it when
+    // a yielded page resumes; a warm layout engine may still hold a read handle.
+    if (!fs.existsSync(input) || !fs.statSync(input).size) await python('extract_page', { path: current.path, index, output: input });
     if (version !== generation) return;
+    if (task.cancelRequested) throw Object.assign(new Error('优先处理当前页'), { code: 'TRANSLATION_CANCELLED' });
     const result = await translator.run({ input, output, force, modelDir: path.join(userDir(), 'models'), settings: { ...settings, apiKey: settings.provider === 'api' ? apiKey : '' } }, userDir(), event => {
       if (version === generation) { Object.assign(current.translations[index], { progress: event.progress, stage: stageLabels[event.stage] || event.stage }); emit(); }
     });
     if (version !== generation) return;
-    current.translations[index] = { status: 'ready', progress: 100, path: output, url: urlFor(output), warnings: result.warnings || 0, seconds: result.seconds }; persist(); emit();
+    current.translations[index] = { status: 'ready', progress: 100, path: output, url: urlFor(output), warnings: result.warnings || 0, seconds: result.seconds, qualityVersion: 6 }; persist(); emit();
     for (const item of current.annotations.filter(a => a.page === index)) { if (item.accuracy === 'manual') item.accuracy = 'pending'; scheduleMap(item.id); }
-  } catch (error) { if (version === generation) { current.translations[index] = { status: 'error', progress: 0, error: redact(error.message) }; emit(); } }
-  finally { if (version === generation) { busy = false; emit(); pump(); } }
+  } catch (error) { if (version === generation) {
+    if (error.code === 'TRANSLATION_CANCELLED') {
+      const keep = explicit || Math.abs(priorityPage-index) <= 1;
+      current.translations[index] = { status: keep ? 'queued' : 'idle', progress: 0 };
+      if (keep) { queue.requeue(index, explicit); if (force) retranslatePages.add(index); }
+      // A second jump may have arrived while the first cancellation was draining.
+      enqueue([priorityPage, priorityPage+1, priorityPage-1], true, true);
+    } else current.translations[index] = { status: 'error', progress: 0, error: redact(error.message) };
+    emit();
+  } }
+  finally { if (version === generation) { activePage = null; busy = false; emit(); pump(); } }
 }
 
 const actions = {
@@ -176,14 +201,16 @@ const actions = {
     if (!doc || (documentUrl && documentUrl !== doc.sourceUrl) || !Number.isInteger(page) || page < 0 || page >= doc.pages.length) return;
     const position = readingPosition({ page, fraction, zoom: zoom ?? doc.viewZoom }, doc.pages.length);
     doc.currentPage = position.page; doc.currentFraction = position.fraction; doc.viewZoom = position.zoom;
-    persist(); if (settings.autoTranslate && !autoPaused) enqueue([page, page+1, page-1], true, true);
+    persist(); if (!autoPaused && (settings.autoTranslate || wholeBookActive)) { priorityPage = page; enqueue([page, page+1, page-1], true, true); prioritizePage(page); }
   },
   translate: ({ all, page, force }) => {
-    if (!doc) return; autoPaused = false; const current = page ?? doc.currentPage;
+    if (!doc) return; autoPaused = false; const current = page ?? doc.currentPage; priorityPage = current;
+    if (all) wholeBookActive = true;
     if (force && Number.isInteger(current) && current >= 0 && current < doc.pages.length && doc.translations[current]?.status !== 'translating') { retranslatePages.add(current); delete doc.translations[current]; }
     enqueue(all ? [current, current+1, current-1, ...Array.from({ length: doc.pages.length }, (_,i) => i)] : force ? [current] : [current, current+1], true);
+    prioritizePage(current);
   },
-  stop: () => { autoPaused = true; stopTranslation(); },
+  stop: () => { autoPaused = true; return stopTranslation(); },
   annotate: async ({ item }) => {
     if (!doc || savePromise) throw new Error('请等待保存完成。');
     if (!item || !['highlight','underline','ink','note'].includes(item.kind) || !['en','zh'].includes(item.origin) || !Number.isInteger(item.page) || item.page < 0 || item.page >= doc.pages.length) throw new Error('标记数据无效。');
@@ -246,7 +273,7 @@ app.whenReady().then(() => {
   win.webContents.on('will-navigate', event => event.preventDefault());
   ipcMain.handle('pdfsandwich:call', async (event, action, args) => { if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame || !Object.hasOwn(actions, action)) throw new Error('未知操作。'); return actions[action](args || {}); });
   if (process.env.PDFSANDWICH_DEV_URL === 'http://127.0.0.1:5173') win.loadURL(process.env.PDFSANDWICH_DEV_URL); else win.loadFile(path.join(root, 'dist', 'index.html'));
-  win.on('close', event => { if (stopping) return; event.preventDefault(); mayLeave().then(yes => { if (yes) { stopping = true; stopTranslation(); worker?.kill(); win.destroy(); app.quit(); } }).catch(error => dialog.showErrorBox('保存失败', redact(error.message))); });
+  win.on('close', event => { if (stopping) return; event.preventDefault(); mayLeave().then(async yes => { if (yes) { stopping = true; await stopTranslation(); worker?.kill(); win.destroy(); app.quit(); } }).catch(error => dialog.showErrorBox('保存失败', redact(error.message))); });
   const argument = process.argv.find(x => /\.pdf$/i.test(x) && fs.existsSync(x));
   if (argument) win.webContents.once('did-finish-load', () => openDocument(argument).catch(error => dialog.showErrorBox('打开失败', error.message)));
 });

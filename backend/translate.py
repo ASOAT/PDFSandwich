@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import sys
 import time
+from cancellation import PageCancelled
 
 async def translate_request(request,send):
     from text_engine import TextEngine
@@ -17,6 +18,7 @@ async def translate_request(request,send):
     output=Path(request['output']);output.parent.mkdir(parents=True,exist_ok=True)
     temporary=str(output)+'.tmp'
     try:
+        engine.control.check()
         toc=translate_contents(request['input'],temporary,engine.translate,
             lambda stage,progress:send({'type':'progress','progress':progress,'stage':stage}))
         if toc is None:
@@ -37,6 +39,8 @@ async def translate_request(request,send):
                 auto_extract_glossary=False, table_model=None, ocr_workaround=False,
                 auto_enable_ocr_workaround=False, remove_non_formula_lines=False,
                 disable_rich_text_translate=True, use_rich_pbar=False)
+            engine.control.check()
+            engine.control.watch(config)
             if profile:
                 import pstats
                 profile.disable()
@@ -56,12 +60,17 @@ async def translate_request(request,send):
                     if not source or not Path(source).is_file():raise RuntimeError('翻译引擎未生成译文 PDF。')
                     shutil.copyfile(source,temporary);break
         if engine.errors:raise RuntimeError('翻译服务调用失败：'+engine.errors[0])
+        engine.control.check()
         warnings=engine.warnings+(toc['warnings'] if toc else [])
-        os.replace(temporary,output)
         engine.save_alignment(output.with_name('alignment.json'))
-        report={'warnings':warnings,'cachedSegments':engine.hits,'seconds':round(time.perf_counter()-started,2),'layout':'contents' if toc else 'babeldoc'}
+        engine.control.check()
+        os.replace(temporary,output)
+        report={'warnings':warnings,'repairedSegments':engine.repaired,'cachedSegments':engine.hits,'seconds':round(time.perf_counter()-started,2),'layout':'contents' if toc else 'babeldoc'}
         output.with_name('quality.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
-        send({'type':'finish','path':str(output),'warnings':len(warnings),'seconds':report['seconds']})
+        send({'type':'finish','path':str(output),'warnings':len(warnings),'repairedSegments':engine.repaired,'seconds':report['seconds']})
+    except (Exception, asyncio.CancelledError):
+        engine.control.check()
+        raise
     finally:engine.close()
 
 def main(server=False):
@@ -76,6 +85,8 @@ def main(server=False):
         try:
             request=json.loads(line)
             with contextlib.redirect_stdout(sys.stderr):asyncio.run(translate_request(request,send))
+        except PageCancelled:
+            send({'type':'cancelled'})
         except Exception as error:
             message=str(error);key=request.get('settings',{}).get('apiKey')
             if key:message=message.replace(key,'[redacted]')

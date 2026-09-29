@@ -68,9 +68,27 @@ def translation_problem(source, target):
     if len(clean)>80:
         counts=Counter(clean[i:i+4] for i in range(len(clean)-3))
         if counts and max(counts.values())*4>len(clean)*.35: return '译文出现大量重复'
-    placeholders=lambda text: Counter(re.findall(r'\{\s*v\s*\d+\s*\}',text))
+    placeholders=lambda text: Counter(re.sub(r'\s+', '', token) for token in re.findall(r'\{\s*v\s*\d+\s*\}',text))
     if placeholders(source)!=placeholders(target): return '公式占位符不完整'
+    if len(re.findall(r'[A-Za-z]{2,}',source))>=8 and not re.search(r'[\u3400-\u9fff]',target): return '正文仍为英文'
     return None
+
+
+def translation_units(text, limit=600):
+    """Bound long requests at sentence/word boundaries, never inside a formula."""
+    if len(text)<=limit:return [text]
+    from alignment import sentence_spans
+    chunks=[];current=''
+    for start,end in sentence_spans(text,True):
+        sentence=text[start:end]
+        if len(current)+len(sentence)>limit and current:
+            chunks.append(current);current=''
+        for token in re.findall(r'\{\s*v\s*\d+\s*\}|\s+|[^\s{]+|.',sentence):
+            if len(current)+len(token)>limit and current:
+                chunks.append(current);current=''
+            current+=token
+    if current:chunks.append(current)
+    return chunks
 
 def translation_prompt(text, custom='', use_builtin=True):
     terms=matching_terms(text,custom,use_builtin)
