@@ -4,12 +4,12 @@ Windows 中英对照 PDF 阅读与批注工具。默认使用免费的本地开�
 
 ## 使用
 
-本机构建的安装程序位于 `release/0.1.1/PDFSandwich Setup 0.1.1.exe`。也可以运行
-`release/0.1.1/win-unpacked/PDFSandwich.exe`；免安装版本需保留整个 `win-unpacked` 文件夹。
+本机构建的安装程序位于 `release/0.1.2/PDFSandwich Setup 0.1.2.exe`。也可以运行
+`release/0.1.2/win-unpacked/PDFSandwich.exe`；免安装版本需保留整个 `win-unpacked` 文件夹。
 安装版不需要安装 Python、Node.js 或配置 API Key。当前为未签名的个人使用版本。
 
 1. 打开或拖入可选中文字的英文 PDF。
-2. 左侧原文、右侧中文。默认优先翻译当前页与邻页，也可选择“翻译整本”。
+2. 左侧原文、右侧中文。默认优先翻译当前页与邻页；“翻译整本”也从当前页开始，再继续其余页面。
 3. 在任一侧滚动，另一侧跟随同一页及页内位置；顶部“同步阅读”可解除联动。
 4. 选择高亮、下划线、手绘或批注工具，在任一侧标记。文字批注内容保持原样。
 5. 点击“保存原 PDF”或按 **Ctrl+S**，将真正的 PDF 批注写回英文原文件。
@@ -25,12 +25,13 @@ Windows 中英对照 PDF 阅读与批注工具。默认使用免费的本地开�
 
 ## 阅读与批注
 
-- 连续滚动、缩放、适合页宽、页码跳转、PDF 目录、英文全文搜索、恢复阅读位置。
+- 连续滚动、缩放、适合页宽、页码跳转、PDF 目录、英文全文搜索；重开文件恢复页码、页内纵向位置和缩放比例。
 - 高亮与下划线优先尝试跨语言短语对应；无法匹配时退回整段，并显示对应精度。
 - 手绘与便笺按相同页内坐标同步，不声称能识别手绘圈住的语义。
 - 统一批注记录，支持修改文字、删除、撤销/重做。草稿即时保存在本机；**草稿保存不等于已写入原 PDF**。
 - 保存采用备份、临时文件校验和原子替换。检测到外部修改会拒绝覆盖。
 - 页面与译文按需加载，附近页才创建画布。原文使用范围读取；翻译一次只处理一页。
+- 快速跳页会更新待翻译的邻页，已手动请求的页面或整本任务继续保留。翻译失败的页需点击重试，不会随滚动反复请求。
 
 | 快捷键 | 功能 |
 | --- | --- |
@@ -73,6 +74,8 @@ npm run test:python
 .venv/Scripts/python.exe scripts/fixtures.py
 .venv/Scripts/python.exe scripts/stress-fixture.py
 npm run test:ui
+node scripts/zoom-smoke.mjs
+node scripts/reading-smoke.mjs
 node scripts/translation-smoke.mjs
 node scripts/bidirectional-smoke.mjs
 .venv/Scripts/python.exe scripts/offline-check.py

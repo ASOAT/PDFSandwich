@@ -20,4 +20,28 @@ function validSettings(value) {
   if (value.provider && !['local','api'].includes(value.provider)) throw new Error('未知翻译方式。');
   return { provider: value.provider || 'local', baseUrl: url.href.replace(/\/$/, '').replace(/\/chat\/completions$/, ''), model: value.model.trim(), autoTranslate: Boolean(value.autoTranslate) };
 }
-module.exports = { cacheKey, parseRange, validSettings };
+function readingPosition(value, pageCount) {
+  return {
+    page: Number.isInteger(value?.page) ? Math.max(0, Math.min(pageCount-1, value.page)) : 0,
+    fraction: Number.isFinite(value?.fraction) ? Math.max(0, Math.min(.999999, value.fraction)) : 0,
+    zoom: Number.isFinite(value?.zoom) ? Math.max(.5, Math.min(3, value.zoom)) : 1
+  };
+}
+class PageQueue {
+  constructor() { this.items = []; this.explicit = new Set(); }
+  get length() { return this.items.length; }
+  add(pages, { automatic = false, prioritize = true } = {}) {
+    const wanted = new Set(pages), dropped = [];
+    if (!automatic) for (const page of pages) this.explicit.add(page);
+    this.items = this.items.filter(page => {
+      if (wanted.has(page)) return false;
+      if (automatic && !this.explicit.has(page)) { dropped.push(page); return false; }
+      return true;
+    });
+    this.items = prioritize ? [...wanted, ...this.items] : [...this.items, ...wanted];
+    return dropped;
+  }
+  shift() { const page = this.items.shift(); this.explicit.delete(page); return page; }
+  clear() { this.items = []; this.explicit.clear(); }
+}
+module.exports = { cacheKey, parseRange, validSettings, readingPosition, PageQueue };

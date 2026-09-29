@@ -13,21 +13,25 @@ function Action({label,children,onClick,disabled,active,className=''}:{label:str
 export default function App(){
   const [theme,setTheme]=useState<'light'|'dark'>(()=>localStorage.getItem('theme')==='dark'?'dark':'light');
   useEffect(()=>{document.documentElement.dataset.theme=theme;localStorage.setItem('theme',theme);},[theme]);
-  const [state,setState]=useState<State>(initial),[tool,setTool]=useState<Tool>('select'),[color,setColor]=useState(colors[0]),[zoom,setZoom]=useState(1),[synced,setSynced]=useState(true),[page,setPage]=useState(0),[pageInput,setPageInput]=useState('1');
+  const [state,setState]=useState<State>(initial),[tool,setTool]=useState<Tool>('select'),[color,setColor]=useState(colors[0]),[zoomState,setZoomState]=useState({source:'',value:1}),[synced,setSynced]=useState(true),[page,setPage]=useState(0),[pageInput,setPageInput]=useState('1');
   const [panel,setPanel]=useState<'outline'|'annotations'|'search'|null>('outline'),[settingsOpen,setSettingsOpen]=useState(false),[selected,setSelected]=useState<string|null>(null),[notice,setNotice]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(''),[exportOpen,setExportOpen]=useState(false);
   const [query,setQuery]=useState(''),[matches,setMatches]=useState<Match[]>([]),[searching,setSearching]=useState(false);
   const left=useRef<ReaderHandle>(null),right=useRef<ReaderHandle>(null),pageTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined),searchId=useRef(0),noticeTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined);
   const doc=state.doc,mark=doc?.annotations.find(a=>a.id===selected);
+  const reading=useRef<{documentUrl:string;page:number;fraction:number;zoom:number}|null>(null);
+  if(doc&&reading.current?.documentUrl!==doc.sourceUrl)reading.current={documentUrl:doc.sourceUrl,page:doc.currentPage,fraction:doc.currentFraction,zoom:doc.viewZoom};
+  const zoom=doc&&zoomState.source===doc.sourceUrl?zoomState.value:doc?.viewZoom??1;
   async function call<T=unknown>(action:string,args?:unknown):Promise<T|undefined>{try{return await window.pdfsandwich.call<T>(action,args);}catch(e){setError((e as Error).message.replace(/^Error invoking remote method '[^']+': Error: /,''));}}
   const notify=(message:string)=>{setNotice(message);clearTimeout(noticeTimer.current);noticeTimer.current=setTimeout(()=>setNotice(''),6000);};
   useEffect(()=>{void window.pdfsandwich.call<State>('state').then(setState);return window.pdfsandwich.onState(setState);},[]);
-  useEffect(()=>{if(doc){setPage(doc.currentPage);setPageInput(String(doc.currentPage+1));setSelected(null);setMatches([]);searchId.current++;void call('page',{page:doc.currentPage});}},[doc?.id]);
+  useEffect(()=>{clearTimeout(pageTimer.current);if(doc){setPage(doc.currentPage);setPageInput(String(doc.currentPage+1));setSelected(null);setMatches([]);setSearching(false);searchId.current++;void call('page',reading.current);}},[doc?.sourceUrl]);
   useEffect(()=>setPageInput(String(page+1)),[page]);
-  const open=async(path?:string)=>{setBusy('正在读取文档…');await call('open',{path});setBusy('');};
+  function rememberReading(){clearTimeout(pageTimer.current);const position=reading.current;pageTimer.current=setTimeout(()=>void call('page',position),250);}
+  const open=async(path?:string)=>{setBusy('正在读取文档…');clearTimeout(pageTimer.current);if(reading.current)await call('page',reading.current);await call('open',{path});setBusy('');};
   const save=async()=>{setBusy('正在保存批注…');const result=await call<{backup:string}>('save');setBusy('');if(result)notify('批注已保存到原 PDF，原文件备份已创建。');};
-  function position(side:Side,next:number,fraction:number){setPage(next);if(synced)(side==='en'?right:left).current?.go(next,fraction);clearTimeout(pageTimer.current);pageTimer.current=setTimeout(()=>void call('page',{page:next}),250);}
-  function go(next:number){if(!doc)return;next=Math.max(0,Math.min(doc.pages.length-1,next));setPage(next);left.current?.go(next);right.current?.go(next);void call('page',{page:next});}
-  function changeZoom(update:(value:number)=>number,x=.5,y=.5){left.current?.captureZoomAnchor(x,y);right.current?.captureZoomAnchor(x,y);setZoom(value=>Math.max(.5,Math.min(3,Math.round(update(value)*1000)/1000)));}
+  function position(side:Side,next:number,fraction:number){if(!reading.current)return;setPage(next);if(synced)(side==='en'?right:left).current?.go(next,fraction);reading.current={...reading.current,page:next,fraction};rememberReading();}
+  function go(next:number){if(!doc||!reading.current)return;clearTimeout(pageTimer.current);next=Math.max(0,Math.min(doc.pages.length-1,next));setPage(next);left.current?.go(next);right.current?.go(next);reading.current={...reading.current,page:next,fraction:0};void call('page',reading.current);}
+  function changeZoom(update:(value:number)=>number,x=.5,y=.5){if(!doc||!reading.current)return;const value=Math.max(.5,Math.min(3,Math.round(update(reading.current.zoom)*1000)/1000));if(value===reading.current.zoom)return;left.current?.captureZoomAnchor(x,y);right.current?.captureZoomAnchor(x,y);reading.current={...reading.current,zoom:value};setZoomState({source:doc.sourceUrl,value});rememberReading();}
   function selectMark(id:string){setSelected(id);setPanel('annotations');const item=doc?.annotations.find(m=>m.id===id);if(item)go(item.page);}
   async function addMark(item:Mark){await call('annotate',{item});if(item.kind==='note'){setSelected(item.id);setPanel('annotations');}}
   async function search(){const id=++searchId.current;if(!query.trim()||!doc)return;setSearching(true);setMatches([]);let start:number|null=0;let found:Match[]=[];while(start!==null&&id===searchId.current){const result:{matches:Match[];next:number|null}|undefined=await call('search',{query:query.trim(),start});if(!result)break;if(id!==searchId.current)return;found=[...found,...result.matches];setMatches(found);start=result.next;}if(id===searchId.current)setSearching(false);}
