@@ -1,0 +1,4 @@
+PyMuPDF==1.25.2
+pdf2zh-next==2.9.0
+ctranslate2==4.8.2
+sentencepiece==0.2.2

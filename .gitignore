@@ -29,3 +29,11 @@ playwright-report/
 .idea/
 Thumbs.db
 Desktop.ini
+public/pdfjs/
+backend-dist/
+tmp/
+output/
+build-resources/licenses/
+scripts/configure.cjs
+scripts/github-private.py
+.pdfsandwich-backups/

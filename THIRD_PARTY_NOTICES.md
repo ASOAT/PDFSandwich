@@ -1,0 +1,35 @@
+# Third-party components
+
+PDFSandwich is currently a private, personal-use project. Its source has not been
+granted a public project license. This does not change any third-party license.
+
+| Component | Version | Upstream / license |
+| --- | --- | --- |
+| Mozilla PDF.js | 6.3.289 | https://github.com/mozilla/pdf.js — Apache-2.0 |
+| Electron | 44.4.5 | https://github.com/electron/electron — MIT; includes Chromium notices |
+| React | 19.x | https://github.com/facebook/react — MIT |
+| Lucide | 0.577.x | https://github.com/lucide-icons/lucide — ISC |
+| PyMuPDF | 1.25.2 | https://github.com/pymupdf/PyMuPDF — AGPL-3.0/commercial dual licensing |
+| PDFMathTranslate-next | 2.9.0 | https://github.com/PDFMathTranslate-next/PDFMathTranslate-next — AGPL-3.0 |
+| BabelDOC | 0.6.2 | https://github.com/funstory-ai/BabelDOC — AGPL-3.0 |
+| CTranslate2 | 4.8.2 | https://github.com/OpenNMT/CTranslate2 — MIT |
+| SentencePiece | 0.2.2 | https://github.com/google/sentencepiece — Apache-2.0 |
+| ONNX Runtime | pinned in backend lock | https://github.com/microsoft/onnxruntime — MIT |
+
+The offline en→zh language package is downloaded on first use from the official
+Argos distribution: https://data.argosopentech.com/argospm/v1/translate-en_zh-1_9.argosmodel
+(SHA-256 `433e7c4f034d87fbe2353161e05f18646d7999452f801a4e1f0378522b9850ab`).
+Argos code is MIT/CC0; this statement is not a blanket license claim about model
+training data. Model package metadata and included notices stay with the download.
+
+BabelDOC downloads its layout model and fonts into the user's local cache. Those
+assets have their own upstream terms. They are not committed to this repository.
+
+The build collects available dependency license/notice files and an installed
+dependency inventory under `resources/licenses`. Electron's own LICENSE and
+Chromium notice files also remain in the distribution. The inventory includes
+some build-only dependencies; it is not a claim that every entry runs at runtime.
+
+Before distributing this private prototype to other people, satisfy the source,
+notice, and licensing obligations of the included AGPL components. A private
+repository alone does not fulfill third-party redistribution obligations.

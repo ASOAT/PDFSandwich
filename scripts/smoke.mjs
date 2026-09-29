@@ -1,0 +1,65 @@
+import { _electron as electron } from 'playwright';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+const root=process.cwd();
+await fs.mkdir('test-results',{recursive:true});
+const errors=[];
+const app=await electron.launch({args:['.'],cwd:root,env:{...process.env,PDFSANDWICH_DATA_DIR:path.join(root,'local-data/ui-smoke')},timeout:60000});
+try{
+  const page=await app.firstWindow();
+  page.setDefaultTimeout(30000);
+  async function waitState(check){const deadline=Date.now()+30000;while(Date.now()<deadline){const value=await page.evaluate(()=>window.pdfsandwich.call('state'));if(check(value))return value;await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('Application state timed out');}
+  page.on('pageerror',error=>errors.push(error.message));
+  page.on('console',message=>{if(message.type()==='error')errors.push(message.text());});
+  await page.getByText('读懂每一页，').waitFor();
+  const configuration=await page.evaluate(()=>window.pdfsandwich.call('state'));
+  await page.evaluate(settings=>window.pdfsandwich.call('settings',{...settings,provider:'local',autoTranslate:false}),configuration.settings);
+  await page.screenshot({path:'test-results/welcome.png'});
+  const file=path.join(root,'tmp/pdfs/reading-sample.pdf');
+  await page.evaluate(file=>window.pdfsandwich.call('open',{path:file}),file);
+  await page.waitForFunction(()=>document.querySelectorAll('[data-side="en"] .textLayer span').length>10);
+  await page.screenshot({path:'test-results/reader.png'});
+  const state=await page.evaluate(()=>window.pdfsandwich.call('state'));
+  const initialCount=state.doc.annotations.length;
+  if(state.doc.pages.length!==6)throw new Error('Expected 6 pages');
+  await page.getByRole('button',{name:'高亮文字',exact:true}).click();
+  // Exercise the real text selection surface, not just the annotation data API.
+  await page.evaluate(()=>{const el=[...document.querySelectorAll('[data-side="en"][data-page="1"] .textLayer span')].find(e=>e.textContent.includes('Scientific knowledge'));if(!el)throw new Error('Selectable text missing');const selection=window.getSelection();const range=document.createRange();range.selectNodeContents(el);selection.removeAllRanges();selection.addRange(range);el.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));});
+  await waitState(s=>s.doc.annotations.length===initialCount+1&&s.doc.dirty);
+  await page.getByRole('button',{name:'保存原 PDF',exact:true}).click();
+  await waitState(s=>!s.doc.dirty&&Boolean(s.doc.backup));
+  const saved=await page.evaluate(()=>window.pdfsandwich.call('state'));
+  if(!saved.doc.backup)throw new Error('Backup missing');
+  await page.evaluate(file=>window.pdfsandwich.call('open',{path:file}),file);
+  const reopened=await page.evaluate(()=>window.pdfsandwich.call('state'));
+  if(!reopened.doc.annotations.length)throw new Error('Annotations not persisted');
+  await page.getByRole('button',{name:'翻译与应用设置'}).click();
+  await page.getByRole('dialog',{name:'翻译设置'}).waitFor();
+  await page.screenshot({path:'test-results/settings.png'});
+  await page.getByRole('button',{name:'关闭设置',exact:true}).click();
+  await page.getByRole('textbox',{name:'当前页码'}).fill('4');
+  await page.getByRole('textbox',{name:'当前页码'}).press('Enter');
+  await page.waitForFunction(()=>document.querySelector('[data-reader="en"]').scrollTop>1000);
+  const positions=await page.evaluate(()=>[...document.querySelectorAll('[data-reader]')].map(x=>x.scrollTop));
+  if(Math.abs(positions[0]-positions[1])>30)throw new Error('Scroll positions differ');
+  const start=Date.now();
+  await page.evaluate(file=>window.pdfsandwich.call('open',{path:file}),path.join(root,'tmp/pdfs/stress-1000-pages.pdf'));
+  await page.getByText('stress-1000-pages.pdf',{exact:true}).first().waitFor();
+  await page.waitForFunction(()=>document.querySelectorAll('[data-side="en"] .textLayer span').length>10);
+  const largeOpenMs=Date.now()-start;
+  await page.getByRole('textbox',{name:'当前页码'}).fill('998');
+  await page.getByRole('textbox',{name:'当前页码'}).press('Enter');
+  await page.waitForFunction(()=>document.querySelector('[data-page="998"] .textLayer')?.textContent.length>30);
+  const canvases=await page.locator('canvas').count();
+  if(canvases>10)throw new Error('Page virtualization failed');
+  const metrics=await app.evaluate(({app})=>app.getAppMetrics().map(m=>({type:m.type,memory:m.memory})));
+  await page.screenshot({path:'test-results/large-document.png'});
+  const stressState=await page.evaluate(()=>window.pdfsandwich.call('state'));
+  // Drive the right scroll surface and verify the left follows it as well.
+  await page.evaluate(()=>{document.querySelector('[data-reader="zh"]').scrollTop-=500;});
+  await page.waitForFunction(()=>Math.abs(document.querySelector('[data-reader="en"]').scrollTop-document.querySelector('[data-reader="zh"]').scrollTop)<3);
+  const report={largeOpenMs,pages:stressState.doc.pages.length,fileMiB:stressState.doc.size/1048576,canvases,metrics,errors};
+  await fs.writeFile('test-results/smoke.json',JSON.stringify(report,null,2));
+  console.log(JSON.stringify(report));
+  if(errors.length)throw new Error('Renderer errors: '+errors.join('; '));
+}catch(error){const page=await app.firstWindow();await page.screenshot({path:'test-results/failure.png'}).catch(()=>{});console.error(error);throw error;}finally{await app.evaluate(({app})=>app.exit(0)).catch(()=>{});}
