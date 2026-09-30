@@ -123,5 +123,6 @@ Release 的 `PDFSandwich-0.3.0-source.zip` 同时提供项目构建脚本及所�
 - [开源选型与翻译方案](docs/research.md)
 - [验收记录](docs/verification.md)
 - [第三方组件与许可](THIRD_PARTY_NOTICES.md)
+- [介绍页与搜索收录维护](docs/search-indexing.md)
 
 应用源码使用 [AGPL-3.0-only](LICENSE)。第三方组件及另行下载的模型保留各自许可，详见 [第三方声明](THIRD_PARTY_NOTICES.md)。

@@ -3,12 +3,63 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="PDFSandwich：Windows 中英对照 PDF 阅读器。本地离线翻译、同步滚动、双向高亮与批注，支持大文档。">
+  <meta name="description" content="PDFSandwich 是开源 Windows 中英对照 PDF 阅读器，支持本地离线翻译、当前页优先翻译、双向高亮批注和同步滚动，尽量保留论文与教材的公式及原版式。免费下载安装。">
+  <meta name="robots" content="index, follow, max-image-preview:large">
   <meta name="color-scheme" content="light dark">
-  <title>PDFSandwich — 中英对照 PDF 阅读器</title>
+  <meta name="theme-color" content="#245b45">
+  <title>PDFSandwich — 开源中英对照 PDF 阅读器与离线翻译</title>
+  <link rel="canonical" href="https://asoat.github.io/PDFSandwich/">
+  <link rel="sitemap" type="application/xml" href="sitemap.xml">
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="zh_CN">
+  <meta property="og:site_name" content="PDFSandwich">
+  <meta property="og:title" content="PDFSandwich — 开源中英对照 PDF 阅读器与离线翻译">
+  <meta property="og:description" content="Windows 本地离线 PDF 翻译，左右同步阅读与批注，尽量保留公式和版式。免费开源。">
+  <meta property="og:url" content="https://asoat.github.io/PDFSandwich/">
+  <meta property="og:image" content="https://asoat.github.io/PDFSandwich/reader-light.png">
+  <meta property="og:image:width" content="1500">
+  <meta property="og:image:height" content="960">
+  <meta property="og:image:alt" content="PDFSandwich 中英对照阅读与双向批注界面">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="PDFSandwich — 中英对照 PDF 阅读器">
+  <meta name="twitter:description" content="本地离线翻译、当前页优先、双向批注与同步滚动。Windows 免费开源软件。">
+  <meta name="twitter:image" content="https://asoat.github.io/PDFSandwich/reader-light.png">
   <link rel="icon" href="icon.png">
   <link rel="stylesheet" href="site.css">
   <script src="site.js" defer></script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "WebSite",
+        "@id": "https://asoat.github.io/PDFSandwich/#website",
+        "name": "PDFSandwich",
+        "url": "https://asoat.github.io/PDFSandwich/",
+        "inLanguage": "zh-CN",
+        "description": "开源 Windows 中英对照 PDF 阅读器与本地离线翻译工具"
+      },
+      {
+        "@type": "SoftwareApplication",
+        "@id": "https://asoat.github.io/PDFSandwich/#application",
+        "name": "PDFSandwich",
+        "url": "https://asoat.github.io/PDFSandwich/",
+        "description": "支持本地离线翻译、当前页优先翻译、双向高亮与批注、同步滚动的 Windows 中英对照 PDF 阅读器。",
+        "applicationCategory": "ProductivityApplication",
+        "operatingSystem": "Windows 10, Windows 11 (x64)",
+        "softwareVersion": "0.3.0",
+        "inLanguage": "zh-CN",
+        "isAccessibleForFree": true,
+        "license": "https://github.com/ASOAT/PDFSandwich/blob/main/LICENSE",
+        "downloadUrl": "https://github.com/ASOAT/PDFSandwich/releases/download/v0.3.0/PDFSandwich-Setup-0.3.0.exe",
+        "releaseNotes": "https://github.com/ASOAT/PDFSandwich/releases/tag/v0.3.0",
+        "screenshot": "https://asoat.github.io/PDFSandwich/reader-light.png",
+        "sameAs": "https://github.com/ASOAT/PDFSandwich",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD", "url": "https://github.com/ASOAT/PDFSandwich/releases/tag/v0.3.0" }
+      }
+    ]
+  }
+  </script>
 </head>
 <body>
   <header class="nav wrap">
@@ -20,7 +71,7 @@
     <section class="hero wrap">
       <a class="release" href="https://github.com/ASOAT/PDFSandwich/releases/tag/v0.3.0"><span class="dot"></span> v0.3.0 现已发布 <span aria-hidden="true">→</span></a>
       <h1>英文原文，<br><em>中文对照。</em></h1>
-      <p class="intro">把论文与教材放在同一张阅读桌上。<br>当前页优先翻译，左右同步浏览，随手高亮与批注。</p>
+      <p class="intro">PDFSandwich，开源 Windows 中英对照 PDF 阅读器。<br>本地离线翻译论文与教材，左右同步浏览、高亮与批注。</p>
       <div class="actions"><a class="download" href="https://github.com/ASOAT/PDFSandwich/releases/download/v0.3.0/PDFSandwich-Setup-0.3.0.exe"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 15v5h16v-5"/></svg> 下载 Windows 版</a><a class="source" href="https://github.com/ASOAT/PDFSandwich">查看源代码 <span aria-hidden="true">↗</span></a></div>
       <p class="download-note">Windows 10 / 11 · x64 · AGPL-3.0 开源</p>
       <div class="preview" aria-label="PDFSandwich 软件界面">
@@ -55,6 +106,6 @@
 
     <section class="closing wrap"><div><span class="label">PDFSandwich · v0.3.0</span><h2>打开下一篇论文。</h2></div><a class="download" href="https://github.com/ASOAT/PDFSandwich/releases/download/v0.3.0/PDFSandwich-Setup-0.3.0.exe">下载 Windows 版 <span aria-hidden="true">↓</span></a></section>
   </main>
-  <footer class="wrap"><a class="brand" href="#"><img src="icon.png" alt="" width="28" height="28">PDFSandwich</a><span>Windows 中英对照 PDF 阅读器</span><div><a href="https://github.com/ASOAT/PDFSandwich/releases">版本记录</a><a href="https://github.com/ASOAT/PDFSandwich/issues">反馈问题</a><a href="https://github.com/ASOAT/PDFSandwich/blob/main/LICENSE">AGPL-3.0</a></div></footer>
+  <footer class="wrap"><a class="brand" href="#"><img src="icon.png" alt="" width="28" height="28">PDFSandwich</a><span>Windows 中英对照 PDF 阅读器</span><div><a href="https://github.com/ASOAT/PDFSandwich/releases">版本记录</a><a href="https://github.com/ASOAT/PDFSandwich/issues">反馈问题</a><a href="https://github.com/ASOAT/PDFSandwich/blob/main/LICENSE">AGPL-3.0</a><a href="sitemap.xml">网站地图</a></div></footer>
 </body>
 </html>

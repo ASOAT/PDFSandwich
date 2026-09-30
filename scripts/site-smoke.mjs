@@ -19,7 +19,7 @@ try {
   page.on('response',r=>{if(r.status()>=400)errors.push(`${r.status()} ${r.url()}`);});
   await page.goto(`http://127.0.0.1:${server.address().port}/`);
   await page.locator('#app-preview').evaluate(img=>img.decode());
-  assert.equal(await page.title(),'PDFSandwich — 中英对照 PDF 阅读器');
+  assert.equal(await page.title(),'PDFSandwich — 开源中英对照 PDF 阅读器与离线翻译');
   assert.equal(await page.locator('.download').first().getAttribute('href'),'https://github.com/ASOAT/PDFSandwich/releases/download/v0.3.0/PDFSandwich-Setup-0.3.0.exe');
   await page.screenshot({path:'test-results/site-desktop.png',fullPage:true});
   await page.getByRole('button',{name:'深色',exact:true}).click();
