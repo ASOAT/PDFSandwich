@@ -103,12 +103,14 @@ async function openDocument(file) {
     // Keep the translation namespace across annotation-only saves; source content is unchanged.
     if (saved.translator === cacheKey(null, settings)) {
       doc.cacheVersion = saved.cacheVersion || doc.cacheVersion;
-      for (const [page, item] of Object.entries(saved.translations || {})) if (fs.existsSync(item.path) && !(item.warnings > 0 && (item.qualityVersion || 5) < 6)) doc.translations[page] = { ...item, url: urlFor(item.path), progress: 100 };
+      for (const [page, item] of Object.entries(saved.translations || {})) if (fs.existsSync(item.path) && !(item.warnings > 0 && (item.qualityVersion || 5) < 7)) doc.translations[page] = { ...item, url: urlFor(item.path), progress: 100 };
     }
   }
   priorityPage = doc.currentPage;
   recent = [{ path: file, name: doc.name, pages: doc.pages.length, openedAt: Date.now() }, ...recent.filter(x => x.path !== file)].slice(0, 12);
-  jsonWrite(path.join(userDir(), 'recent.json'), recent); persist(); emit(); return state();
+  jsonWrite(path.join(userDir(), 'recent.json'), recent); persist(); emit();
+  for (const item of doc.annotations) if (!item.en || !item.zh || ['pending', 'unmatched'].includes(item.accuracy)) scheduleMap(item.id);
+  return state();
 }
 async function completion(messages, maxTokens = 1500) {
   if (settings.provider !== 'api') throw new Error('本地翻译模式不会调用云端 API。');
@@ -119,14 +121,16 @@ async function completion(messages, maxTokens = 1500) {
   if (!response.ok) throw new Error(`翻译服务返回 HTTP ${response.status}。请检查余额、密钥、模型名和地址。`);
   const result = await response.json(); return result.choices?.[0]?.message?.content || '';
 }
-async function mapItem(id) {
+async function mapItem(id, anchor) {
   const current = doc, item = current?.annotations.find(x => x.id === id);
   if (!item || item.accuracy === 'manual' || !current.translations[item.page]?.path) return;
-  const translated = current.translations[item.page].path;
-  const args = { source_path: item.origin === 'en' ? current.path : translated, target_path: item.origin === 'en' ? translated : current.path, item };
-  const target = item.origin === 'en' ? 'zh' : 'en';
+  const translation = current.translations[item.page], translated = translation.path;
+  const origin = anchor || item.origin;
+  const sourceItem = anchor && anchor !== item.origin ? { ...item, origin, selectedText: undefined } : item;
+  const args = { source_path: origin === 'en' ? current.path : translated, target_path: origin === 'en' ? translated : current.path, item: sourceItem };
+  const target = origin === 'en' ? 'zh' : 'en';
   let mapping = await python('map_annotation', args);
-  const stillExists = () => doc === current && current.annotations.includes(item) && item.accuracy !== 'manual';
+  const stillExists = () => doc === current && current.annotations.includes(item) && item.accuracy !== 'manual' && current.translations[item.page] === translation;
   if (!stillExists()) return;
   if (JSON.stringify(item[target]) !== JSON.stringify(mapping.geometry) || item.accuracy !== mapping.accuracy) {
     item[target] = mapping.geometry; item.accuracy = mapping.accuracy; changed();
@@ -142,7 +146,7 @@ async function mapItem(id) {
     } catch { /* Preserve the source selection; do not invent a target range. */ }
   }
 }
-function scheduleMap(id) { const task = mapItem(id).catch(() => {}).finally(() => mappingTasks.delete(task)); mappingTasks.add(task); return task; }
+function scheduleMap(id, anchor) { const task = mapItem(id, anchor).catch(() => {}).finally(() => mappingTasks.delete(task)); mappingTasks.add(task); return task; }
 function enqueue(pages, prioritize = true, automatic = false) {
   if (!doc) return;
   const list = [...new Set(pages)].filter(p => Number.isInteger(p) && p >= 0 && p < doc.pages.length && !['ready', 'translating', ...(automatic ? ['error'] : [])].includes(doc.translations[p]?.status));
@@ -178,8 +182,8 @@ async function pump() {
       if (version === generation) { Object.assign(current.translations[index], { progress: event.progress, stage: stageLabels[event.stage] || event.stage }); emit(); }
     });
     if (version !== generation) return;
-    current.translations[index] = { status: 'ready', progress: 100, path: output, url: urlFor(output), warnings: result.warnings || 0, seconds: result.seconds, qualityVersion: 6 }; persist(); emit();
-    for (const item of current.annotations.filter(a => a.page === index)) { if (item.accuracy === 'manual') item.accuracy = 'pending'; scheduleMap(item.id); }
+    current.translations[index] = { status: 'ready', progress: 100, path: output, url: urlFor(output), warnings: result.warnings || 0, seconds: result.seconds, qualityVersion: 7 }; persist(); emit();
+    for (const item of current.annotations.filter(a => a.page === index)) { if (item.accuracy === 'manual') item.accuracy = 'pending'; scheduleMap(item.id, item.en ? 'en' : undefined); }
   } catch (error) { if (version === generation) {
     if (error.code === 'TRANSLATION_CANCELLED') {
       const keep = explicit || Math.abs(priorityPage-index) <= 1;

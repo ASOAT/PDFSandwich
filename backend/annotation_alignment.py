@@ -1,5 +1,6 @@
 """Resolve bilingual ranges against PDF glyphs, including wrapped text."""
 import re
+from difflib import SequenceMatcher
 import pymupdf as fitz
 from alignment import compact, aligned_ranges
 
@@ -66,51 +67,75 @@ def coverage(chars, selection):
                for char in chars) / max(1, sum(fitz.Rect(char['bbox']).get_area() for char in chars))
 
 
+def contextual_hits(page_text, page_chars, text, a, b):
+    """Find a short range even when PDF extraction reorders styled/math runs.
+
+    Score nearby literal text to distinguish repeated phrases. Requiring an
+    entire translated paragraph to be contiguous made valid marks disappear.
+    """
+    exact = locate(page_text, page_chars, text, a, b)
+    if exact:
+        return [(chars, 1.0) for chars in exact]
+    left = max((m.end() for m in re.finditer(r'\{[^{}]*\}', text[:a])), default=0)
+    following = re.search(r'\{[^{}]*\}', text[b:])
+    right = b+following.start() if following else len(text)
+    fragment = text[left:right]
+    exact = locate(page_text, page_chars, fragment, a-left, b-left)
+    if exact:
+        return [(chars, 1.0) for chars in exact]
+    phrase = compact(text[a:b])
+    before, after = compact(text[left:a])[-60:], compact(text[b:right])[:60]
+    result = []
+    for offset in occurrences(page_text, phrase):
+        length = len(phrase)
+        checks = []
+        if before:
+            checks.append(SequenceMatcher(None,before,page_text[max(0,offset-len(before)):offset],autojunk=False).ratio())
+        if after:
+            checks.append(SequenceMatcher(None,after,page_text[offset+length:offset+length+len(after)],autojunk=False).ratio())
+        score = sum(checks)/len(checks) if checks else 1.0
+        result.append((page_chars[offset:offset+length],score))
+    return result
+
+
 def map_records(page, counterpart, item, records):
     origin = item.get('origin', 'en')
     src, dst = ('source','target') if origin=='en' else ('target','source')
     selection = [fitz.Rect(rect) for rect in item[origin]['rects']]
-    selected = compact(item.get('selectedText') or ' '.join(page.get_textbox(rect) for rect in selection))
+    source_text, source_chars = glyphs(page)
+    # get_textbox includes adjacent-line glyphs that only touch the selection.
+    # Rebuilding an English anchor after re-layout must use the selected glyphs.
+    selected = compact(item.get('selectedText') or ''.join(
+        source_text[i] for i,char in enumerate(source_chars)
+        if coverage([char], selection) >= .5))
     if not selected:
         return None
-    source_text, source_chars = glyphs(page)
     target_text, target_chars = glyphs(counterpart)
     candidates = []
     for record in records:
         normalized, indices = indexed(record[src])
         for offset in occurrences(normalized, selected):
             a, b = indices[offset], indices[offset+len(selected)-1]+1
-            source_hits = locate(source_text, source_chars, record[src], a, b)
-            # Formula placeholders are replaced by original vector glyphs during
-            # typesetting; use their adjacent literal fragment for page lookup.
-            if not source_hits:
-                for fragment in re.finditer(r'[^{}]+(?=\{|$)', record[src]):
-                    if fragment.start()<=a and b<=fragment.end():
-                        source_hits = locate(source_text,source_chars,fragment.group(),a-fragment.start(),b-fragment.start())
-                        if source_hits:break
+            source_hits = contextual_hits(source_text, source_chars, record[src], a, b)
             if not source_hits:
                 continue
-            overlap = max(coverage(hit,selection) for hit in source_hits)
+            overlap, context = max((coverage(hit,selection),score) for hit,score in source_hits)
             if overlap < .45:
                 continue
             ranges = aligned_ranges(record,a,b,origin)
             mapped = []
             for start,end in ranges:
-                hits = locate(target_text,target_chars,record[dst],start,end)
-                if not hits:
-                    for fragment in re.finditer(r'[^{}]+(?=\{|$)',record[dst]):
-                        if fragment.start()<=start and end<=fragment.end():
-                            hits=locate(target_text,target_chars,fragment.group(),start-fragment.start(),end-fragment.start())
-                            if hits:break
+                hits = contextual_hits(target_text,target_chars,record[dst],start,end)
                 if hits:
-                    def distance(chars):
+                    def distance(hit):
+                        chars, score = hit
                         box = fitz.Rect(boxes(chars)[0]); reference=selection[0]
-                        return abs(box.y0-reference.y0)+abs(box.x0-reference.x0)*.2
-                    mapped.extend(boxes(min(hits,key=distance)))
+                        return (-score, abs(box.y0-reference.y0)+abs(box.x0-reference.x0)*.2)
+                    mapped.extend(boxes(min(hits,key=distance)[0]))
             if mapped:
-                candidates.append((overlap,len(normalized),mapped))
+                candidates.append((overlap,context,len(normalized),mapped))
     if not candidates:
         return None
     # Geometric source validation disambiguates repeated phrases on a page.
-    best=max(candidates,key=lambda value:(value[0],-value[1]))
-    return {'geometry':{'rects':best[2]},'accuracy':'phrase'}
+    best=max(candidates,key=lambda value:(value[0],value[1],-value[2]))
+    return {'geometry':{'rects':best[3]},'accuracy':'phrase'}

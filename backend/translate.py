@@ -38,7 +38,7 @@ async def translate_request(request,send):
                 qps=100 if engine.local is not None else 2, pool_max_workers=2,
                 auto_extract_glossary=False, table_model=None, ocr_workaround=False,
                 auto_enable_ocr_workaround=False, remove_non_formula_lines=False,
-                disable_rich_text_translate=True, use_rich_pbar=False)
+                disable_rich_text_translate=False, use_rich_pbar=False)
             engine.control.check()
             engine.control.watch(config)
             if profile:

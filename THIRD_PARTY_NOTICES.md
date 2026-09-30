@@ -1,7 +1,7 @@
 # Third-party components
 
-PDFSandwich is currently a private, personal-use project. Its source has not been
-granted a public project license. This does not change any third-party license.
+PDFSandwich project source is licensed under GNU AGPL version 3 (AGPL-3.0-only).
+See `LICENSE`. Third-party components retain their respective licenses.
 
 | Component | Version | Upstream / license |
 | --- | --- | --- |
@@ -46,6 +46,13 @@ dependency inventory under `resources/licenses`. Electron's own LICENSE and
 Chromium notice files also remain in the distribution. The inventory includes
 some build-only dependencies; it is not a claim that every entry runs at runtime.
 
-Before distributing this private prototype to other people, satisfy the source,
-notice, and licensing obligations of the included AGPL components. A private
-repository alone does not fulfill third-party redistribution obligations.
+The public release includes the matching project/build source and exact source
+distributions for PyMuPDF (including MuPDF native sources), BabelDOC and
+PDFMathTranslate-next. Download the `PDFSandwich-<version>-source.zip` asset from
+https://github.com/ASOAT/PDFSandwich/releases. Dependency source URLs and SHA-256
+hashes are recorded inside the archive. See `scripts/source-bundle.py`.
+
+Runtime adapters in `backend/layout_preservation.py`, `reference_layout.py` and
+`layout_runtime.py` preserve mathematical glyph groups, bibliography entries,
+heading numbers and translated text styles. They apply to the pinned BabelDOC
+version; the original dependency source and these adapters are included together.

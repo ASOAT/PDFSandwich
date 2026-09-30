@@ -33,23 +33,89 @@ class TextEngine:
         self.memory.execute('CREATE TABLE IF NOT EXISTS translations (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
         identity={key:self.cfg.get(key) for key in ('provider','localEngine','glossary','useGlossary')}
         if self.local is None:identity.update(baseUrl=self.cfg['baseUrl'],model=self.cfg['model'])
-        self.identity=json.dumps(identity,sort_keys=True)+'quality-v6'
+        self.identity=json.dumps(identity,sort_keys=True)+'quality-v8'
         self.lock=threading.Lock()
 
     def translate(self,text):
-        source=normalize(text)
+        reference=text.startswith('\x1ereference\x1f')
+        source=normalize(text.removeprefix('\x1ereference\x1f'))
         if not source.strip():return source
         self.control.check()
         with self.lock:
             self.control.check()
             try:
-                output,records=self.translate_cached(source)
+                if reference:output,records=self.translate_reference(source)
+                else:output,records=self.translate_styled(source) if "<style id=" in source else self.translate_cached(source)
                 self.records.extend(records)
                 return output
             except PageCancelled:raise
             except Exception as error:
                 self.errors.append(str(error)[:200])
                 raise
+
+    def translate_reference(self, source):
+        """Translate the title, keeping bibliographic identity text verbatim."""
+        tags = re.compile(r"(</?style(?: id='\d+')?>)")
+        visible = tags.sub('', source)
+        author_end = re.search(r'(?<=[A-Za-zÀ-ž]{2})\.\s*(?=[A-Z])', visible)
+        if not author_end:
+            return source, [self.alignment(visible, visible)]
+        start = author_end.end()
+        # Some references begin with a title and then "In ..." (no authors).
+        if visible[start:].startswith('In '):
+            start = 0
+        rest = visible[start:]
+        end_match = re.search(r'\.\s*(?:In\b|[A-Z])|,\s*(?:January|February|March|April|May|June|July|August|September|October|November|December|volume\b|pages\b|vol\.|pp\.|\d{4}\b)', rest)
+        end = start+end_match.start() if end_match else len(visible.rstrip('. '))
+        offset = 0
+        parts = []
+        for part in tags.split(source):
+            if tags.fullmatch(part):
+                parts.append(part)
+                continue
+            a, b = max(start-offset, 0), min(end-offset, len(part))
+            if a < b:
+                value = part[a:b]
+                literals = {}
+                next_id = max([int(x) for x in re.findall(r'\{\s*v\s*(\d+)\s*\}', source)] or [0])+1
+                def protect_literal(match):
+                    key = next_id+len(literals)
+                    literals[key] = match[0]
+                    return '{v'+str(key)+'}'
+                value = re.sub(r'\$[^$]+\$', protect_literal, value)
+                translated, _ = self.translate_cached(value)
+                translated = re.sub(r'\{\s*v\s*(\d+)\s*\}', lambda m:literals.get(int(m[1]),m[0]), translated)
+                parts.append(part[:a]+translated+part[b:])
+            else:
+                parts.append(part)
+            offset += len(part)
+        output = ''.join(parts)
+        return output, [self.alignment(visible, tags.sub('', output))]
+
+    def translate_styled(self, source):
+        """Keep style markup under application control, out of model output.
+
+        Translate a styled phrase once, then protect it as a formula-like token
+        while translating its surrounding sentence. Align the final visible
+        text, not internal tags or the temporary style tokens.
+        """
+        pattern = re.compile(r"(<style id='\d+'>)(.*?)</style>", re.S)
+        next_id = max([int(x) for x in re.findall(r'\{\s*v\s*(\d+)\s*\}', source)] or [0]) + 1
+        replacements = {}
+        def protect(match):
+            nonlocal next_id
+            value, _ = self.translate_cached(match[2])
+            if match[2].rstrip().endswith('.') and not value.rstrip().endswith(('.', '。', '！', '？')):
+                value = value.rstrip()+'。'
+            marker = next_id; next_id += 1
+            replacements[marker] = match[1] + value + '</style>'
+            return '{v' + str(marker) + '}'
+        protected = pattern.sub(protect, source)
+        output, _ = self.translate_cached(protected)
+        output = re.sub(r'\{\s*v\s*(\d+)\s*\}',
+                        lambda m: replacements.get(int(m[1]), m[0]), output)
+        visible = lambda text: re.sub(r"</?style(?: id='\d+')?>", '', text)
+        return output, [self.alignment(visible(source), visible(output))]
 
     def generate(self,source):
         if self.local is not None:

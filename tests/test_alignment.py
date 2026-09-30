@@ -24,6 +24,30 @@ def test_sentence_alignment_keeps_initials_and_split_sentence_offsets():
     merged=sentence_pairs('Robots weld and paint. They move.','机器人焊接。它们喷漆。它们移动。')
     assert merged[0][1]==(0,len('机器人焊接。它们喷漆。'))
 from annotation_alignment import map_records
+from alignment import anchored_pairs
+
+
+def test_formula_anchors_prevent_sentence_pair_drift():
+    source='A heading. Energy function {v1} follows a distribution {v2}. More text.'
+    target='标题与能量函数{v1}服从分布{v2}。其他文字。'
+    pairs=anchored_pairs(source,target)
+    assert any('distribution' in source[a:b] and '分布' in target[c:d] for (a,b),(c,d) in pairs)
+    assert all('{v' not in source[a:b] and '{v' not in target[c:d] for (a,b),(c,d) in pairs)
+
+
+def test_styled_extraction_does_not_require_whole_paragraph_match():
+    with fitz.open() as src,fitz.open() as dst:
+        s=src.new_page();t=dst.new_page()
+        s.insert_text((50,80),'Notations:',fontsize=12)
+        s.insert_text((115,80),' The state is x.',fontsize=12)
+        t.insert_text((50,80),'符号约定：',fontname='china-s',fontsize=12)
+        t.insert_text((115,80),'状态为 x。',fontname='china-s',fontsize=12)
+        record={'source':'Notations: The state is {v1}.','target':'符号约定: 状态是 {v1}。','terms':[['Notations','符号约定']]}
+        item={'origin':'en','selectedText':'Notations','en':{'rects':[list(s.search_for('Notations')[0])]}}
+        result=map_records(s,t,item,[record])
+        assert result and result['accuracy']=='phrase'
+        reverse={'origin':'zh','selectedText':'符号约定','zh':result['geometry']}
+        assert map_records(t,s,reverse,[record])['accuracy']=='phrase'
 
 
 def test_terms_override_diffuse_attention_and_reverse_subwords():
@@ -67,3 +91,17 @@ def test_nonmatching_selection_is_not_replaced_by_whole_paragraph():
         t.insert_text((50,80),'一句话。',fontname='china-s',fontsize=12)
         item={'origin':'en','selectedText':'missing','en':{'rects':[[50,65,120,84]]}}
         assert map_records(s,t,item,[{'source':'One sentence.','target':'一句话。','terms':[]}]) is None
+
+
+def test_remapping_anchor_excludes_adjacent_line_without_selected_text():
+    with fitz.open() as src,fitz.open() as dst:
+        s=src.new_page();t=dst.new_page()
+        s.insert_text((50,80),'Gradient descent',fontsize=12)
+        s.insert_text((50,94),'Another line.',fontsize=12)
+        t.insert_text((50,80),'梯度下降',fontname='china-s',fontsize=12)
+        rect=list(s.search_for('Gradient descent')[0])
+        item={'origin':'en','en':{'rects':[rect]}}
+        record={'source':'Gradient descent','target':'梯度下降','terms':[['Gradient descent','梯度下降']]}
+        result=map_records(s,t,item,[record])
+        assert result and result['accuracy']=='phrase'
+        assert len(result['geometry']['rects'])==1

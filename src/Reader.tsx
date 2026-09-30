@@ -6,9 +6,9 @@ import { fromView, toView, transformRect, viewSize } from './geometry';
 import type { Document, Mark, PageInfo, Point, Rect, Side, Tool, Match } from './types';
 
 export type ReaderHandle = { go: (page: number, fraction?: number) => void; captureZoomAnchor: (x?: number, y?: number) => void };
-type Props = { doc: Document; side: Side; zoom: number; tool: Tool; color: string; marks: Mark[]; matches: Match[]; onPosition: (page: number, fraction: number) => void; onWheelZoom: (factor: number, x: number, y: number) => void; onMark: (mark: Mark) => void; onSelectMark: (id: string) => void; onTranslate: (page: number) => void; onError: (message: string) => void };
+type Props = { doc: Document; side: Side; theme: 'light' | 'dark'; zoom: number; tool: Tool; color: string; marks: Mark[]; matches: Match[]; onPosition: (page: number, fraction: number) => void; onWheelZoom: (factor: number, x: number, y: number) => void; onMark: (mark: Mark) => void; onSelectMark: (id: string) => void; onTranslate: (page: number) => void; onError: (message: string) => void };
 
-function PdfPage({ doc, side, page: index, scale, info, tool, color, marks, matches, onMark, onSelectMark, onError }: Omit<Props,'zoom'|'onPosition'|'onTranslate'> & { page: number; scale: number; info: PageInfo }) {
+function PdfPage({ doc, side, theme, page: index, scale, info, tool, color, marks, matches, onMark, onSelectMark, onError }: Omit<Props,'zoom'|'onPosition'|'onTranslate'> & { page: number; scale: number; info: PageInfo }) {
   const canvas = useRef<HTMLCanvasElement>(null), text = useRef<HTMLDivElement>(null), surface = useRef<HTMLDivElement>(null);
   const [rendering, setRendering] = useState(true), [error, setError] = useState(''), [stroke, setStroke] = useState<Point[]>([]);
   const pen = useRef<Point[]>([]), drawing = useRef(false);
@@ -29,7 +29,8 @@ function PdfPage({ doc, side, page: index, scale, info, tool, color, marks, matc
       const node = canvas.current;
       node.width = Math.ceil(viewport.width*ratio); node.height = Math.ceil(viewport.height*ratio);
       node.style.width = `${viewport.width}px`; node.style.height = `${viewport.height}px`;
-      const task = page.render({ canvas: node, viewport, transform: [ratio,0,0,ratio,0,0], annotationMode: AnnotationMode.DISABLE }); renderTask = task;
+      const task = page.render({ canvas: node, viewport, transform: [ratio,0,0,ratio,0,0], annotationMode: AnnotationMode.DISABLE,
+        pageColors: theme === 'dark' ? { background: '#111111', foreground: '#f2f2f2' } : undefined }); renderTask = task;
       const container = text.current; container.replaceChildren();
       container.style.setProperty('--scale-factor', String(scale)); container.style.setProperty('--total-scale-factor', String(scale));
       layer = new TextLayer({ textContentSource: page.streamTextContent(), container, viewport });
@@ -38,7 +39,7 @@ function PdfPage({ doc, side, page: index, scale, info, tool, color, marks, matc
       if (!cancelled) setRendering(false);
     }).catch(e => { if (!cancelled && e.name !== 'RenderingCancelledException' && e.name !== 'AbortException') { setError(e.message); setRendering(false); } });
     return () => { cancelled = true; renderTask?.cancel(); layer?.cancel(); pdfPage?.cleanup(); resource.release(); };
-  }, [url, index, side, scale, info.rotation]);
+  }, [url, index, side, scale, info.rotation, theme]);
   const add = (kind: Mark['kind'], rects: Rect[], paths?: Point[][], selectedText?: string) => onMark({ id: crypto.randomUUID(), page: index, kind, color, width: 1.6, content: '', origin: side, [side]: { rects, ...(paths ? { paths } : {}) }, accuracy: 'pending', selectedText });
   const point = (event: React.PointerEvent): Point => { const bounds = surface.current!.getBoundingClientRect(); return fromView([Math.max(0,Math.min(size[0],(event.clientX-bounds.left)/scale)),Math.max(0,Math.min(size[1],(event.clientY-bounds.top)/scale))],info); };
   const finishSelection = () => {

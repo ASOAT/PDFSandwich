@@ -33,6 +33,9 @@ TERMS = {
     'multifingered hands': '多指手',
     'properties of rotation matrices': '旋转矩阵的性质',
     'cross product': '叉积', 'inner product': '内积', 'dot product': '点积',
+    'lower (upper) scripts': '下标（上标）', 'Notations': '符号约定',
+    'trajectory optimization': '轨迹优化', 'score function': '得分函数',
+    'Langevin': '朗之万', 'Monte Carlo': '蒙特卡洛',
 }
 
 def normalize(text):

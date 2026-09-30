@@ -12,7 +12,8 @@ _installed = False
 
 
 class LayoutTranslator:
-    name = 'pdfsandwich-v5'
+    name = 'pdfsandwich-v7'
+    preserves_styles = True
     model = 'guarded-text'
     lang_in = 'en'
     lang_out = 'zh'
@@ -43,10 +44,57 @@ def install():
     global _installed
     if _installed:
         return
+    from layout_preservation import install as install_preservation
+    install_preservation()
     from babeldoc.format.pdf.document_il.utils.fontmap import FontMapper
     from babeldoc.format.pdf.document_il.backend.pdf_creater import PDFCreater
     from babeldoc.docvision.base_doclayout import DocLayoutModel
+    from babeldoc.format.pdf.document_il.midend.il_translator import ILTranslator
     DocLayoutModel.load_available = staticmethod(functools.cache(DocLayoutModel.load_available))
+    prepare = ILTranslator.pre_translate_paragraph
+
+    def prepare_styled(self, paragraph, tracker, page_font_map, xobj_font_map):
+        if getattr(self.translate_engine, 'preserves_styles', False):
+            # Upstream assumes only its LLM prompt path can preserve styles.
+            # Our TextEngine handles tags itself. Use a per-call proxy to
+            # enable style extraction without racing other paragraph workers
+            # or opting into upstream LLM prompts.
+            proxy = copy.copy(self)
+            proxy.support_llm_translate = True
+            text, translation_input = prepare(proxy, paragraph, tracker, page_font_map, xobj_font_map)
+            if text and paragraph.layout_label == 'reference':
+                text = '\x1ereference\x1f' + text
+            return text, translation_input
+        return prepare(self, paragraph, tracker, page_font_map, xobj_font_map)
+
+    ILTranslator.pre_translate_paragraph = prepare_styled
+    from babeldoc.format.pdf.document_il.midend.typesetting import Typesetting, TypesettingUnit
+    word_width = Typesetting._get_width_before_next_break_point
+
+    def remaining_word_width(self, units, scale):
+        # The caller already adds the current glyph's width. Upstream counts
+        # it twice, which can fit the first letter then break inside the word
+        # when the second glyph is wider (e.g. "a" / "nd" in a reference).
+        width = word_width(self, units, scale)
+        return max(0, width-units[0].width*scale) if units else 0
+
+    Typesetting._get_width_before_next_break_point = remaining_word_width
+    render_unit = TypesettingUnit.render
+
+    def render_styled(self):
+        result = render_unit(self)
+        if (not self.can_passthrough and self.unicode and self.original_font
+                and self.original_font.italic and self.font and not self.font.is_italic):
+            # CJK font packs often have no oblique face. Preserve italic text
+            # with a 12-degree shear around each glyph's original baseline.
+            for char in result[0]:
+                char.pdf_style = copy.copy(char.pdf_style)
+                char.pdf_style.graphic_state = copy.copy(char.pdf_style.graphic_state)
+                state = char.pdf_style.graphic_state
+                state.passthrough_per_char_instruction = (state.passthrough_per_char_instruction or '') + f' 1 0 0.212557 1 {-0.212557*char.box.y:.6f} 0 cm'
+        return result
+
+    TypesettingUnit.render = render_styled
 
     initialize = FontMapper.__init__
     templates = {}

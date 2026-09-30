@@ -9,6 +9,23 @@ from translation_quality import matching_terms
 _aligners = {}
 
 
+def anchored_pairs(source, target):
+    """Use preserved math identities to stop sentence alignment from drifting."""
+    pattern = r'\{\s*v\s*(\d+)\s*\}'
+    left, right = list(re.finditer(pattern, source)), list(re.finditer(pattern, target))
+    if not left or [m[1] for m in left] != [m[1] for m in right]:
+        return sentence_pairs(source, target)
+    pairs = []
+    a = b = 0
+    for x, y in zip(left, right):
+        if source[a:x.start()].strip() and target[b:y.start()].strip():
+            pairs.extend(((i+a,j+a),(k+b,l+b)) for (i,j),(k,l) in sentence_pairs(source[a:x.start()],target[b:y.start()]))
+        a, b = x.end(), y.end()
+    if source[a:].strip() and target[b:].strip():
+        pairs.extend(((i+a,j+a),(k+b,l+b)) for (i,j),(k,l) in sentence_pairs(source[a:],target[b:]))
+    return pairs
+
+
 def sentence_spans(text, english):
     boundaries = [0]
     pattern = r'(?<=[.!?])\s+(?=[A-Z])' if english else r'(?<=[。！？])\s*'
@@ -63,7 +80,7 @@ class PhraseAligner:
         self.vocabulary = set(json.loads((root / info['model'] / 'shared_vocabulary.json').read_text(encoding='utf-8')))
 
     def align(self, source, target):
-        pairs=sentence_pairs(source,target)
+        pairs=anchored_pairs(source,target)
         result={'sourceSpans':[],'targetSpans':[],'links':[]}
         for (a,b),(c,d) in pairs:
             part=self.align_sentence(source[a:b],target[c:d])
@@ -138,6 +155,12 @@ def aligned_ranges(record, start, end, origin):
         return []
     if selection == compact(text):
         return [(0, len(target))]
+    # Names, acronyms and other identity text are often intentionally retained.
+    # Match their unique literal occurrence before consulting attention weights.
+    if len(selection) >= 3:
+        matches = list(re.finditer(re.escape(text[start:end]), target, re.I))
+        if len(matches) == 1:
+            return [matches[0].span()]
     for english, chinese in sorted(record.get('terms', []), key=lambda pair: -len(pair[0])):
         a, b = (english, chinese) if origin == 'en' else (chinese, english)
         if compact(a) == selection:

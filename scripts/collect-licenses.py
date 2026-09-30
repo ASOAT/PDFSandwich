@@ -27,6 +27,8 @@ for folder in folders:
             target=destination/'npm'/name.replace('/','__')/file.name;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(file,target)
 (destination/'inventory.json').write_text(json.dumps(inventory,ensure_ascii=False,indent=2),encoding='utf-8')
 shutil.copyfile(root/'THIRD_PARTY_NOTICES.md',destination/'THIRD_PARTY_NOTICES.md')
+shutil.copyfile(root/'LICENSE',destination/'PDFSandwich-LICENSE.txt')
+(destination/'SOURCE.txt').write_text('PDFSandwich source and exact AGPL dependency source distributions:\nhttps://github.com/ASOAT/PDFSandwich/releases\nBuild instructions and pinned dependency versions are included in the source archive.\n',encoding='utf-8')
 print(f'Collected notices for {len(inventory)} installed build/runtime dependencies.')
 
 shutil.copytree(root/'licenses',destination/'models',dirs_exist_ok=True)

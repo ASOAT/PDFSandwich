@@ -71,3 +71,31 @@ def test_formula_whitespace_and_untranslated_prose_detection():
     assert ''.join(units)==text
     assert all(len(unit)<=100 for unit in units)
     assert sum(unit.count('{ v 123 }') for unit in units)==25
+
+
+def test_style_markup_is_never_sent_to_model_and_alignment_contains_visible_text(tmp_path):
+    engine=engine_at(tmp_path);calls=[]
+    def generate(source):
+        calls.append(source)
+        if source=='Important.':return '重要'
+        return source.replace('Read ', '阅读').replace(' now.', '。')
+    engine.generate=generate
+    try:
+        output=engine.translate("Read <style id='1'>Important.</style> now.")
+        assert "<style id='1'>重要。</style>" in output
+        assert all('<style' not in call for call in calls)
+        assert '<style' not in engine.records[-1]['source']
+        assert '<style' not in engine.records[-1]['target']
+    finally:engine.close()
+
+
+def test_reference_translates_title_but_preserves_authors_venue_and_date(tmp_path):
+    engine=engine_at(tmp_path);calls=[]
+    engine.generate=lambda source:(calls.append(source) or '贝叶斯优化教程')
+    try:
+        source='Peter I. Frazier. A Tutorial on Bayesian Optimization, July 2018.'
+        output=engine.translate('\x1ereference\x1f'+source)
+        assert output=='Peter I. Frazier. 贝叶斯优化教程, July 2018.'
+        assert calls==['A Tutorial on Bayesian Optimization']
+        assert engine.records[-1]['source']==source
+    finally:engine.close()

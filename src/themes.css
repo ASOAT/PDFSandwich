@@ -65,7 +65,7 @@
 .modal-actions{align-items:center}.local-footer{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--subtle)}
 :root[data-theme="dark"] .paper-art{background:#dce4db;color:#425644;box-shadow:0 20px 70px #0004;border-color:#68766a}
 :root[data-theme="dark"] .welcome{background:radial-gradient(ellipse at 77% 38%,#406d5733,transparent 60%),var(--surface)}
-:root[data-theme="dark"] .pdf-surface{box-shadow:0 3px 16px #0005}
+:root[data-theme="dark"] .pdf-surface{background:#111;box-shadow:0 3px 16px #0005}
 :root[data-theme="dark"] .busy-overlay{background:#141c1ed9;color:var(--accent)}
 :root[data-theme="dark"] .error-banner,:root[data-theme="dark"] .connection-error{background:#493629;color:#f1cfb2;border-color:#7b5a41}
 :root[data-theme="dark"] .connection-result{background:var(--soft);color:var(--accent)}

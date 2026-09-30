@@ -56,7 +56,7 @@ try{
   const draftPath=path.join(data,'documents',paused.doc.id,'draft.json');
   const draft=JSON.parse(await fs.readFile(draftPath,'utf8'));
   draft.translations[2]={...draft.translations[0],warnings:1,qualityVersion:5};
-  draft.translations[3]={...draft.translations[0],warnings:1,qualityVersion:6};
+  draft.translations[3]={...draft.translations[0],warnings:1,qualityVersion:7};
   await fs.writeFile(draftPath,JSON.stringify(draft));await call('open',{path:file});
   const migrated=await state();
   assert.equal(migrated.doc.translations[0].status,'ready');
