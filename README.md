@@ -2,22 +2,34 @@
 
 Windows 中英对照 PDF 阅读与批注工具。默认使用免费的本地 HY-MT 专用英译中模型，提供浅色和深色主题。
 
-[下载 v0.4.2](https://github.com/ASOAT/PDFSandwich/releases/tag/v0.4.2) · [产品介绍](https://asoat.github.io/PDFSandwich/) · [反馈问题](https://github.com/ASOAT/PDFSandwich/issues)
+[下载 v0.5.0](https://github.com/ASOAT/PDFSandwich/releases/tag/v0.5.0) · [产品介绍](https://asoat.github.io/PDFSandwich/) · [反馈问题](https://github.com/ASOAT/PDFSandwich/issues)
 
 ![PDFSandwich 中英对照阅读界面](docs/reader-light.png)
 
 ## 使用
 
-从 [GitHub Release](https://github.com/ASOAT/PDFSandwich/releases/latest) 下载 `PDFSandwich-Setup-0.4.2.exe`，适用于 Windows 10 / 11 x64。
+从 [GitHub Release](https://github.com/ASOAT/PDFSandwich/releases/latest) 下载 `PDFSandwich-Setup-0.5.0.exe`，适用于 Windows 10 / 11 x64。
 安装版不需要安装 Python、Node.js 或配置 API Key。当前安装包未签名，发布页附 SHA-256 校验文件、完整源码包和原创示例 PDF。
 
-1. 打开或拖入可选中文字的英文 PDF。
+1. 在文献库导入或拖入可选中文字的英文 PDF。导入时复制到统一文献库，默认位于软件文件夹下的 `文献库`；初始文件保持不变。
 2. 左侧原文、右侧中文。默认翻到哪里就优先翻译哪里；即使正在翻译整本，跳页也会让后台任务让出位置，先处理当前页，再继续邻页和剩余任务。
 3. 在任一侧滚动，另一侧跟随同一页及页内位置；顶部“同步阅读”可解除联动。
 4. 选择高亮、下划线、手绘或批注工具，在任一侧标记。高亮/下划线支持整段、多段和跨页拖选，按页对应并可一次撤销；英文侧未翻译页面的标记会在翻译后补上。中文侧跨页选择要求经过的页面已翻译。文字批注内容保持原样。
 5. 点击“保存原 PDF”或按 **Ctrl+S**，将真正的 PDF 批注写回英文原文件。
    保存前自动在原文件旁的 `.pdfsandwich-backups` 目录创建备份。
-6. 完成整本翻译后，可导出中文 PDF 或中英交替页 PDF。
+6. 设置中开启“自动保存中文 PDF”后，每完成页面翻译或修改批注，会更新库内原 PDF 旁的同名 `.zh.pdf`。未翻译页保留英文；也可手动导出中文 PDF 或中英交替页 PDF。
+
+## 文献库
+
+- 左侧建立分类和子分类，中间浏览、搜索和排序，右侧编辑标题、作者、年份、标签和文献备注。同一份 PDF 可属于多个分类；支持批量添加分类和标签。
+- 导入复制到 `软件文件夹/文献库/文献编号/原文件名.pdf`。每份文献有独立子文件夹，同名 PDF 不互相覆盖；从同一路径重复导入复用已有条目。
+- 点击左下角“文献库存储位置”打开文件夹；导入第一份文献前可选择其他目录。已有文献的库暂不提供自动迁移。
+- “打开 PDF”会导入并开始阅读。旧版最近阅读记录继续显示，首次从文献库打开时复制入库，并继承能复用的阅读草稿与译文缓存。
+- **Ctrl+S 保存的是文献库中的原文副本**。导入前的初始文件不被改写。移出文献库仅移除管理记录，文件保留；删除分类不会删除文献。
+- 自动保存中文 PDF 默认关闭。开启后采用临时文件、外部修改检查和原子替换；同名文件已有时另存 `.zh (2).pdf`。已有译文被外部修改、移动或占用时提示重试或另存副本。
+- 软件更新和普通卸载保留软件文件夹中的文献库。分类、标签与文件索引位于 `%APPDATA%/pdfsandwich/library.json`，写入时保留上一份 `.bak`。备份文献库时也应备份此索引。
+
+![PDFSandwich 文献库](docs/library-light.png)
 
 高质量引擎首次下载 HY-MT 1.5 1.8B Q4 模型约 1.1 GB、Vulkan 运行时约 33 MB，以及约 330 MiB 排版模型和字体。
 支持断点续传和 SHA-256 校验，下载后可离线翻译。另用 Argos 语言包（约 67 MiB）对齐现成译文，不改写 HY-MT 的翻译；设置中也保留 Argos 轻量 CPU 翻译引擎。
@@ -54,7 +66,7 @@ Gemini 免费额度预设需在 Google AI Studio 获取自己的密钥，受服�
 
 ## 数据与限制
 
-- 草稿、译文、离线语言模型及设置：`%APPDATA%/pdfsandwich/`。
+- 草稿、翻译缓存、离线语言模型及设置：`%APPDATA%/pdfsandwich/`。管理的原文副本默认在软件文件夹的 `文献库`；自动保存的中文 PDF 与其同目录。
 - BabelDOC 排版模型、字体与工作缓存：`%USERPROFILE%/.cache/babeldoc/`。
 - 云端密钥使用 Windows 系统保护后保存在本机设置中，不进入仓库。
 - 不支持扫描件 OCR、修改原文正文、数字签名编辑或密码解密。
@@ -73,7 +85,7 @@ Gemini 免费额度预设需在 Google AI Studio 获取自己的密钥，受服�
 
 安装前可保存原 PDF、保留草稿或取消安装；保存失败会阻止安装。安装完成后恢复原文档，保留设置、批注草稿、译文与已下载模型。普通退出不会自动安装。自动检查只访问 GitHub 版本信息，不上传 PDF 内容；可在设置里关闭。
 
-**0.3.x 及更早版本没有更新入口，需要手动安装一次 0.4.2；以后从软件内更新。**
+**0.3.x 及更早版本没有更新入口，需要手动安装一次 0.5.0；以后从软件内更新。**
 
 维护者需在每个正式 Release 同时上传安装包、同名 `.exe.blockmap` 和 `latest.yml`，并保留旧版本的 blockmap。不要重新压缩或重命名构建产物；`latest.yml` 中的版本、文件名、SHA-512 和字节数由发布脚本核验。不要更改 appId、产品名或用户数据目录，否则会影响升级与缓存复用。
 
@@ -107,7 +119,10 @@ node scripts/release-ui.mjs
 .venv/Scripts/python.exe scripts/annotation-fixture.py
 node scripts/annotation-ui.mjs
 node scripts/update-ui.mjs
-# 先构建 0.4.2，并保留 release/0.4.0 的原安装包和 blockmap：
+node scripts/library-ui.mjs
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/installer-library-test.ps1
+# 先构建 0.5.0，并保留 release/0.4.2 的原安装包和 blockmap：
+$env:PDFSANDWICH_PREVIOUS_VERSION='0.4.2'
 node scripts/update-transfer-test.cjs
 # 设置 PDFSANDWICH_PRIORITY_PDF 为至少 26 页的测试 PDF 后：
 node scripts/priority-smoke.mjs
@@ -125,14 +140,15 @@ UI 测试只修改测试 PDF 的副本，测试数据与缓存不提交。发布
 .venv/Scripts/python.exe scripts/create-icon.py
 npm run build:backend
 npm run build:licenses
-npm run dist -- '--config.directories.output=release/0.4.2'
+npm run dist -- '--config.directories.output=release/0.5.0'
 .venv/Scripts/python.exe scripts/source-bundle.py
 ```
 
 后端通过 PyInstaller 打包，再由 Electron Builder 生成 NSIS 安装程序。
 构建会核验并应用 BabelDOC 0.6.2 的两处导入替换：用经等价测试的轻量运算完成字形聚类和灰度相似度检查，避免首次排版加载不需要的大型计算库。
 构建输出在 `release/`，不提交二进制文件、模型、密钥或文档缓存。
-Release 的 `PDFSandwich-0.4.2-source.zip` 同时提供项目构建脚本及所封装 AGPL 依赖的对应源代码；模型与 llama.cpp 运行时另行下载，不封装在安装包中。
+可运行 `npm run clean:releases` 预览本机旧构建，再运行 `npm run clean:releases -- -Apply` 清理。工具保留当前版本，拒绝清理正在运行或包含链接的目录，跳过包含 PDF 或文献库的目录；不会删除 GitHub Release、模型或用户资料。
+Release 的 `PDFSandwich-0.5.0-source.zip` 同时提供项目构建脚本及所封装 AGPL 依赖的对应源代码；模型与 llama.cpp 运行时另行下载，不封装在安装包中。
 
 ## 设计与验证
 

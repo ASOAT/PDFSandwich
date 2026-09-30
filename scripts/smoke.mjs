@@ -11,7 +11,7 @@ try{
   async function waitState(check){const deadline=Date.now()+30000;while(Date.now()<deadline){const value=await page.evaluate(()=>window.pdfsandwich.call('state'));if(check(value))return value;await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('Application state timed out');}
   page.on('pageerror',error=>errors.push(error.message));
   page.on('console',message=>{if(message.type()==='error')errors.push(message.text());});
-  await page.getByRole('heading',{name:'打开 PDF，中英对照阅读。'}).waitFor();
+  await page.getByRole('heading',{name:'全部文献'}).waitFor();
   const configuration=await page.evaluate(()=>window.pdfsandwich.call('state'));
   await page.evaluate(settings=>window.pdfsandwich.call('settings',{...settings,provider:'local',autoTranslate:false}),configuration.settings);
   await page.screenshot({path:'test-results/welcome.png'});

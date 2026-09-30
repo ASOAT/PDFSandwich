@@ -17,6 +17,7 @@ coverage/
 *.log
 data/
 local-data/
+/文献库/
 test-results/
 playwright-report/
 *.pdf

@@ -82,7 +82,7 @@ export const Reader = forwardRef<ReaderHandle, Props>((props, ref) => {
   }
   const go=(page:number,fraction=0)=>{if(!viewport.current)return;page=Math.max(0,Math.min(doc.pages.length-1,page));const top=Math.max(0,offsets[page]+fraction*(viewSize(doc.pages[page])[1]*scale+40)-24);viewport.current.scrollTop=top;ignoredTop.current=viewport.current.scrollTop;setScrollTop(viewport.current.scrollTop);};
   useImperativeHandle(ref,()=>({go,captureZoomAnchor}));
-  useLayoutEffect(()=>{if(!viewport.current)return;const observer=new ResizeObserver(([entry])=>{setWidth(entry.contentRect.width);setHeight(entry.contentRect.height);});observer.observe(viewport.current);return()=>observer.disconnect();},[]);
+  useLayoutEffect(()=>{if(!viewport.current)return;const observer=new ResizeObserver(([entry])=>{if(entry.contentRect.width<=0||entry.contentRect.height<=0)return;setWidth(entry.contentRect.width);setHeight(entry.contentRect.height);});observer.observe(viewport.current);return()=>observer.disconnect();},[]);
   useLayoutEffect(()=>{
     const previous=layout.current,node=viewport.current;
     if(node&&width>0&&restored.current!==doc.sourceUrl){
@@ -130,6 +130,7 @@ export const Reader = forwardRef<ReaderHandle, Props>((props, ref) => {
   useEffect(()=>setSelectionAnchor(null),[doc.sourceUrl,props.tool]);
   const begin=Math.max(0,indexAt(scrollTop)-1),end=Math.min(doc.pages.length-1,indexAt(scrollTop+height)+1);
   return <div className="reader-scroll" ref={viewport} data-reader={side} onMouseDownCapture={event=>{if(['highlight','underline'].includes(props.tool)){const surface=(event.target as Element).closest<HTMLElement>('.pdf-surface');if(surface)setSelectionAnchor(Number(surface.dataset.page)-1);}}} onScroll={()=>{
+    if(!viewport.current?.clientWidth)return;
     const top=viewport.current!.scrollTop;setScrollTop(top);
     if(ignoredTop.current!==null&&Math.abs(top-Math.min(ignoredTop.current,total-height))<2){ignoredTop.current=null;return;}
     ignoredTop.current=null;const page=indexAt(top+24),fraction=(top+24-offsets[page])/(viewSize(doc.pages[page])[1]*scale+40);onPosition(page,Math.max(0,fraction));

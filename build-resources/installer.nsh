@@ -1,0 +1,26 @@
+; The user's managed PDF library lives next to the application. Never remove
+; the installation directory recursively, during either updates or uninstall.
+!macro customRemoveFiles
+  SetOutPath "$TEMP"
+  RMDir /r "$INSTDIR\resources"
+  RMDir /r "$INSTDIR\locales"
+  Delete "$INSTDIR\PDFSandwich.exe"
+  Delete "$INSTDIR\${UNINSTALL_FILENAME}"
+  Delete "$INSTDIR\chrome_100_percent.pak"
+  Delete "$INSTDIR\chrome_200_percent.pak"
+  Delete "$INSTDIR\d3dcompiler_47.dll"
+  Delete "$INSTDIR\dxcompiler.dll"
+  Delete "$INSTDIR\dxil.dll"
+  Delete "$INSTDIR\ffmpeg.dll"
+  Delete "$INSTDIR\icudtl.dat"
+  Delete "$INSTDIR\LICENSE.electron.txt"
+  Delete "$INSTDIR\LICENSES.chromium.html"
+  Delete "$INSTDIR\resources.pak"
+  Delete "$INSTDIR\snapshot_blob.bin"
+  Delete "$INSTDIR\v8_context_snapshot.bin"
+  Delete "$INSTDIR\version"
+  Delete "$INSTDIR\vk_swiftshader_icd.json"
+  Delete "$INSTDIR\vk_swiftshader.dll"
+  Delete "$INSTDIR\vulkan-1.dll"
+  RMDir "$INSTDIR"
+!macroend

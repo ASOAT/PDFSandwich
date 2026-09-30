@@ -22,7 +22,7 @@ function validSettings(value) {
   const glossary = String(value.glossary || '').trim();
   if (glossary.length > 20000 || glossary.split('\n').length > 200) throw new Error('自定义术语最多 200 行、20,000 字符。');
   if (glossary.split('\n').filter(line => line.trim()).some(line => { const split = line.indexOf('='); return split < 1 || [line.slice(0,split).trim(),line.slice(split+1).trim()].some(part => !part || part.length>120); })) throw new Error('术语表请按每行“英文 = 中文”填写，原文和译文各不超过 120 个字符。');
-  return { provider: value.provider || 'local', localEngine: value.localEngine || 'hy', useGlossary: value.useGlossary !== false, glossary, baseUrl: url.href.replace(/\/$/, '').replace(/\/chat\/completions$/, ''), model: value.model.trim(), autoTranslate: Boolean(value.autoTranslate) };
+  return { provider: value.provider || 'local', localEngine: value.localEngine || 'hy', useGlossary: value.useGlossary !== false, glossary, baseUrl: url.href.replace(/\/$/, '').replace(/\/chat\/completions$/, ''), model: value.model.trim(), autoTranslate: Boolean(value.autoTranslate), saveTranslation: Boolean(value.saveTranslation) };
 }
 function readingPosition(value, pageCount) {
   return {

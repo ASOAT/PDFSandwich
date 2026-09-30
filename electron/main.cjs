@@ -9,13 +9,15 @@ const crypto = require('node:crypto');
 const { cacheKey, parseRange, validSettings, readingPosition, PageQueue } = require('./core.cjs');
 const { TranslationWorker } = require('./translation-worker.cjs');
 const { UpdateController } = require('./updates.cjs');
+const { Library } = require('./library.cjs');
+const { TranslationFileSaver, snapshotTranslation } = require('./translation-file.cjs');
 protocol.registerSchemesAsPrivileged([{ scheme: 'pdfsandwich', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }]);
 if (process.env.PDFSANDWICH_DATA_DIR) app.setPath('userData', path.resolve(process.env.PDFSANDWICH_DATA_DIR));
 const root = path.join(__dirname, '..');
-let win, worker, updates, seq = 0, doc = null, busy = false, stopping = false, savePromise = null;
+let win, worker, updates, library, libraryError = '', seq = 0, doc = null, busy = false, stopping = false, savePromise = null;
 const queue = new PageQueue();
 const retranslatePages = new Set();
-let settings = { provider: 'local', localEngine: 'hy', useGlossary: true, glossary: '', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', autoTranslate: true }, apiKey = '', recent = [];
+let settings = { provider: 'local', localEngine: 'hy', useGlossary: true, glossary: '', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', autoTranslate: true, saveTranslation: false }, apiKey = '', recent = [];
 const pending = new Map(), files = new Map(), mappingTasks = new Set();
 let history = [], future = [], generation = 0, autoPaused = false;
 let activePage = null, priorityPage = 0, wholeBookActive = false;
@@ -25,6 +27,19 @@ const draftPath = () => path.join(docDir(), 'draft.json');
 const stageLabels = {'Parse PDF and Create Intermediate Representation':'读取页面文字与图形','DetectScannedFile':'检查文字层','Parse Page Layout':'识别页面布局','Parse Paragraphs':'整理正文段落','Parse Formulas and Styles':'保留公式与样式','Translate Paragraphs':'在翻译引擎中处理正文','Typesetting':'排版中文正文','Add Fonts':'准备中文字体','Generate drawing instructions':'生成中文页面','Subset font':'整理页面字体','Save PDF':'保存中文 PDF'};
 const redact = value => String(value).replaceAll(apiKey || '\0', '[redacted]');
 const translator = new TranslationWorker(() => backendCommand('--translate-server'), redact);
+const translationSaver = new TranslationFileSaver({
+  snapshot: () => settings.saveTranslation && doc ? snapshotTranslation(doc) : null,
+  write: args => separatePython('sync_translation',args),
+  status: (current,status,error='') => { current ||= doc; if(current) { current.autoSave={...current.autoSave,status,error:redact(error)}; if(current===doc)emit(); } },
+  result: (snapshot,result) => {
+    const current=snapshot.doc;
+    current.translationFile={path:result.path,stamp:result.stamp,signatures:snapshot.signatures,writes:(current.translationFile?.writes||0)+1,updatedAt:Date.now()};
+    current.autoSave={status:'saved',path:result.path,error:'',updatedAt:Date.now()};
+    library?.translation(current.path,snapshot.count,result.path);
+    if(current===doc){persist();emit();}
+  }
+});
+function scheduleTranslationSave() { if(settings.saveTranslation&&doc)translationSaver.request(); }
 
 function backendCommand(mode = '') {
   if (app.isPackaged) return { exe: path.join(process.resourcesPath, 'backend', 'pdfsandwich-worker.exe'), args: mode ? [mode] : [] };
@@ -45,6 +60,19 @@ function python(op, args) {
   if (!worker) startWorker();
   return new Promise((resolve, reject) => { const id = ++seq; pending.set(id, { resolve, reject }); worker.stdin.write(JSON.stringify({ id, op, args }) + '\n', error => { if (error) { pending.delete(id); reject(error); } }); });
 }
+function separatePython(op,args) {
+  const command=backendCommand();
+  return new Promise((resolve,reject)=>{
+    const child=spawn(command.exe,command.args,{windowsHide:true,env:{...process.env,PYTHONIOENCODING:'utf-8'}});
+    let response;
+    const timer=setTimeout(()=>{child.kill();reject(new Error('保存译文超时，已保留之前的文件，请重试。'));},240000);
+    readline.createInterface({input:child.stdout}).on('line',line=>{try{response=JSON.parse(line);}catch{}});
+    child.stderr.on('data',()=>{});
+    child.on('error',error=>{clearTimeout(timer);reject(error);});
+    child.on('exit',code=>{clearTimeout(timer);if(code!==0||!response)reject(new Error('保存译文失败，请检查文件夹权限或文件是否被占用。'));else if(response.error)reject(new Error(response.error));else resolve(response.result);});
+    child.stdin.on('error',()=>{});child.stdin.end(JSON.stringify({id:1,op,args})+'\n');
+  });
+}
 function jsonWrite(file, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temp = file + '.tmp'; fs.writeFileSync(temp, JSON.stringify(data, null, 2)); fs.renameSync(temp, file);
@@ -54,9 +82,9 @@ function urlFor(file) { const id = crypto.randomUUID(); files.set(id, file); ret
 function publicSettings() { return { ...settings, hasKey: Boolean(apiKey) }; }
 function state() { return { doc, settings: publicSettings(), recent, canUndo: history.length > 0, canRedo: future.length > 0, queued: queue.length, translating: busy }; }
 function emit() { if (win && !win.isDestroyed()) win.webContents.send('pdfsandwich:state', state()); }
-function persist() { if (doc) jsonWrite(draftPath(), { stamp: doc.stamp, annotations: doc.annotations, dirty: doc.dirty, cacheVersion: doc.cacheVersion, translator: cacheKey(null, settings), translations: Object.fromEntries(Object.entries(doc.translations).filter(([,v]) => v.status === 'ready').map(([k,v]) => [k, { path: v.path, status: 'ready', warnings: v.warnings || 0, seconds: v.seconds, qualityVersion: v.qualityVersion || 5 }])), page: doc.currentPage, fraction: doc.currentFraction, zoom: doc.viewZoom }); }
+function persist() { if (doc) jsonWrite(draftPath(), { stamp: doc.stamp, annotations: doc.annotations, dirty: doc.dirty, translationFile:doc.translationFile, cacheVersion: doc.cacheVersion, translator: cacheKey(null, settings), translations: Object.fromEntries(Object.entries(doc.translations).filter(([,v]) => v.status === 'ready').map(([k,v]) => [k, { path: v.path, status: 'ready', warnings: v.warnings || 0, seconds: v.seconds, qualityVersion: v.qualityVersion || 5 }])), page: doc.currentPage, fraction: doc.currentFraction, zoom: doc.viewZoom }); }
 function remember() { history.push(structuredClone(doc.annotations)); if (history.length > 60) history.shift(); future = []; }
-function changed() { doc.dirty = true; persist(); emit(); }
+function changed() { doc.dirty = true; persist(); emit(); scheduleTranslationSave(); }
 
 async function save() {
   if (!doc || !doc.dirty) return;
@@ -64,6 +92,7 @@ async function save() {
   const current = doc;
   savePromise = (async () => {
     await Promise.allSettled([...mappingTasks]);
+    await translationSaver.flush();
     if (current.annotations.some(a => !a.en)) throw new Error('仍有中文侧标记未能对应到原文，无法保存。请删除或重新选择这些标记。');
     const snapshot = structuredClone(current.annotations);
     const result = await python('save_original', { path: current.path, annotations: snapshot, expected_stamp: current.stamp, baseline: current.baseline });
@@ -94,10 +123,13 @@ async function openDocument(file) {
   if (!file) { const result = await dialog.showOpenDialog(win, { title: '打开英文 PDF', filters: [{ name: 'PDF 文档', extensions: ['pdf'] }], properties: ['openFile'] }); if (result.canceled) return null; file = result.filePaths[0]; }
   if (typeof file !== 'string' || path.extname(file).toLowerCase() !== '.pdf') throw new Error('请选择 PDF 文件。');
   const metadata = await python('inspect', { path: file });
+  await translationSaver.flush();
   stopTranslation(); autoPaused = false; files.clear(); history = []; future = [];
   doc = { ...metadata, sourceUrl: urlFor(metadata.path), dirty: false, currentPage: 0, currentFraction: 0, viewZoom: 1, translations: {}, cacheVersion: cacheKey(metadata.stamp, settings), backup: null };
   const saved = readJson(draftPath(), null);
   if (saved && JSON.stringify(saved.stamp) === JSON.stringify(doc.stamp)) {
+    doc.translationFile=saved.translationFile;
+    if(saved.translationFile)doc.autoSave={status:'saved',path:saved.translationFile.path,updatedAt:saved.translationFile.updatedAt,error:''};
     doc.annotations = saved.annotations || doc.annotations; doc.dirty = saved.dirty || false;
     const position = readingPosition(saved, doc.pages.length);
     doc.currentPage = position.page; doc.currentFraction = position.fraction; doc.viewZoom = position.zoom;
@@ -108,9 +140,12 @@ async function openDocument(file) {
     }
   }
   priorityPage = doc.currentPage;
+  library?.upsert({...metadata,title:metadata.name.replace(/\.pdf$/i,'')},{opened:true});
+  library?.translation(doc.path,Object.values(doc.translations).filter(item=>item.status==='ready').length);
   recent = [{ path: file, name: doc.name, pages: doc.pages.length, openedAt: Date.now() }, ...recent.filter(x => x.path !== file)].slice(0, 12);
   jsonWrite(path.join(userDir(), 'recent.json'), recent); persist(); emit();
   for (const item of doc.annotations) if (item.accuracy !== 'manual' && (!item.en || !item.zh || item.mappingVersion !== 4 || ['pending', 'unmatched'].includes(item.accuracy))) scheduleMap(item.id);
+  scheduleTranslationSave();
   return state();
 }
 async function completion(messages, maxTokens = 1500) {
@@ -184,6 +219,8 @@ async function pump() {
     });
     if (version !== generation) return;
     current.translations[index] = { status: 'ready', progress: 100, path: output, url: urlFor(output), warnings: result.warnings || 0, seconds: result.seconds, qualityVersion: 7 }; persist(); emit();
+    library?.translation(current.path,Object.values(current.translations).filter(item=>item.status==='ready').length);
+    scheduleTranslationSave();
     for (const item of current.annotations.filter(a => a.page === index)) { if (item.accuracy === 'manual') item.accuracy = 'pending'; scheduleMap(item.id, item.en ? 'en' : undefined); }
   } catch (error) { if (version === generation) {
     if (error.code === 'TRANSLATION_CANCELLED') {
@@ -265,9 +302,10 @@ const actions = {
   undo: () => { if (!doc || !history.length || savePromise) return; future.push(structuredClone(doc.annotations)); doc.annotations = history.pop(); changed(); for (const item of doc.annotations) scheduleMap(item.id); },
   redo: () => { if (!doc || !future.length || savePromise) return; history.push(structuredClone(doc.annotations)); doc.annotations = future.pop(); changed(); for (const item of doc.annotations) scheduleMap(item.id); },
   search: ({ query, start }) => { if (!doc) return { matches: [], next: null }; return python('search', { path: doc.path, query: String(query).slice(0, 300), start: Math.max(0, Number(start) || 0) }); },
-  settings: ({ provider, baseUrl, model, key, autoTranslate, localEngine, useGlossary, glossary }) => {
-    const next = validSettings({ provider, baseUrl, model, autoTranslate, localEngine, useGlossary, glossary });
+  settings: async ({ provider, baseUrl, model, key, autoTranslate, localEngine, useGlossary, glossary, saveTranslation = settings.saveTranslation }) => {
+    const next = validSettings({ provider, baseUrl, model, autoTranslate, localEngine, useGlossary, glossary, saveTranslation });
     const different = cacheKey(null, settings) !== cacheKey(null, next);
+    if(different)await translationSaver.flush();
     // A credential is never silently forwarded to a newly selected provider.
     if (different && settings.baseUrl !== next.baseUrl && !key) apiKey = '';
     if (typeof key === 'string' && key.trim()) apiKey = key.trim();
@@ -275,6 +313,7 @@ const actions = {
     const secret = apiKey ? safeStorage.encryptString(apiKey).toString('base64') : '';
     jsonWrite(path.join(userDir(), 'settings.json'), { ...settings, secret });
     if (different && doc) { stopTranslation(); doc.cacheVersion = cacheKey(doc.stamp, settings); doc.translations = {}; persist(); }
+    if(!next.saveTranslation)translationSaver.cancelPending();else scheduleTranslationSave();
     emit(); return publicSettings();
   },
   testConnection: async () => { if (settings.provider === 'local') return { text: '本地引擎已启用。首次翻译页面时自动下载模型，无需 API Key。' }; const text = await completion([{ role: 'user', content: 'Translate to simplified Chinese. Return only the translation: The reader preserves mathematical formulas.' }], 120); if (!text) throw new Error('服务未返回文本。'); return { text }; },
@@ -290,11 +329,68 @@ const actions = {
   reveal: () => { if (doc) shell.showItemInFolder(doc.path); }
 };
 
+async function importLibraryFile(file,collectionId) {
+  if(typeof file!=='string'||path.extname(file).toLowerCase()!=='.pdf')throw new Error('请选择 PDF 文件。');
+  const metadata=await python('catalog',{path:file});
+  const item=library.importCopy(metadata,collectionId);
+  // Preserve existing drafts and translated pages when a recently read file
+  // is first copied into the managed library. Source documents stay untouched.
+  const previous=readJson(path.join(userDir(),'documents',metadata.id,'draft.json'),null);
+  if(previous&&JSON.stringify(previous.stamp)===JSON.stringify(metadata.stamp)&&item.path!==metadata.path) {
+    const copied=await python('catalog',{path:item.path});
+    const target=path.join(userDir(),'documents',copied.id,'draft.json');
+    if(!fs.existsSync(target)) { delete previous.translationFile;jsonWrite(target,{...previous,stamp:copied.stamp}); }
+  }
+  return item;
+}
+Object.assign(actions,{
+  libraryState:()=>{if(libraryError)throw new Error(libraryError);return library.snapshot();},
+  libraryImport:async({paths,collectionId})=>{
+    if(!paths){const result=await dialog.showOpenDialog(win,{title:'导入 PDF 到文献库',filters:[{name:'PDF 文档',extensions:['pdf']}],properties:['openFile','multiSelections']});if(result.canceled)return null;paths=result.filePaths;}
+    if(!Array.isArray(paths)||paths.length>500)throw new Error('每次最多导入 500 份 PDF。');
+    const imported=[],errors=[];
+    for(const file of paths){try{imported.push((await importLibraryFile(file,collectionId)).id);}catch(error){errors.push({name:path.basename(String(file)),error:redact(error.message)});}}
+    return {imported:[...new Set(imported)],errors,library:library.snapshot()};
+  },
+  libraryOpen:async({id})=>{let item=library.get(id);if(!item.managed)item=await importLibraryFile(item.path);return openDocument(item.path);},
+  libraryEdit:({id,changes})=>{library.editDocument(id,changes);return library.snapshot();},
+  libraryBatch:({ids,collectionId,tag})=>{
+    if(!Array.isArray(ids)||ids.length>10000)throw new Error('请选择文献。');
+    for(const id of ids){const item=library.get(id);library.editDocument(id,{...(collectionId?{collections:[...item.collections,collectionId]}:{}),...(tag?{tags:[...item.tags,tag]}:{})});}
+    return library.snapshot();
+  },
+  libraryCollection:args=>{library.collection(args);return library.snapshot();},
+  libraryRemoveCollection:({id})=>{library.removeCollection(id);return library.snapshot();},
+  libraryRemove:({ids})=>{library.removeDocuments(ids);return library.snapshot();},
+  libraryReveal:({id,translation})=>{const item=library.get(id);const file=translation?item.translationPath:item.path;if(file&&fs.existsSync(file))shell.showItemInFolder(file);},
+  libraryRelink:async({id,sourcePath})=>{
+    if(!sourcePath){const answer=await dialog.showOpenDialog(win,{title:'重新定位 PDF',filters:[{name:'PDF',extensions:['pdf']}],properties:['openFile']});if(answer.canceled)return null;sourcePath=answer.filePaths[0];}
+    const metadata=await python('catalog',{path:sourcePath});library.relocate(id,metadata);library.get(id).managed=false;
+    await importLibraryFile(sourcePath);return library.snapshot();
+  },
+  libraryStorage:async()=>{
+    const answer=await dialog.showOpenDialog(win,{title:'选择文献库文件夹',defaultPath:library.data.storageRoot,properties:['openDirectory','createDirectory']});
+    if(!answer.canceled){
+      const selected=path.resolve(answer.filePaths[0]).toLowerCase();
+      const program=app.isPackaged?path.dirname(app.getPath('exe')):root;
+      if(['resources','locales'].some(name=>{const reserved=path.join(program,name).toLowerCase();return selected===reserved||selected.startsWith(reserved+path.sep);}))throw new Error('请选择程序资源目录以外的文件夹，例如软件文件夹中的“文献库”。');
+      library.setStorageRoot(answer.filePaths[0]);
+    }return library.snapshot();
+  },
+  libraryFolder:async()=>{fs.mkdirSync(library.data.storageRoot,{recursive:true});await shell.openPath(library.data.storageRoot);},
+  translationSaveRetry:async({copy=false})=>{if(copy&&doc){delete doc.translationFile;persist();}scheduleTranslationSave();await translationSaver.flush();return state();},
+  translationReveal:()=>{if(doc?.translationFile&&fs.existsSync(doc.translationFile.path))shell.showItemInFolder(doc.translationFile.path);}
+});
+
 app.whenReady().then(() => {
   const stored = readJson(path.join(userDir(), 'settings.json'), {});
-  settings = { ...settings, ...Object.fromEntries(Object.entries(stored).filter(([k]) => ['provider','baseUrl','model','autoTranslate','localEngine','useGlossary','glossary'].includes(k))) };
+  settings = { ...settings, ...Object.fromEntries(Object.entries(stored).filter(([k]) => ['provider','baseUrl','model','autoTranslate','localEngine','useGlossary','glossary','saveTranslation'].includes(k))) };
   try { apiKey = stored.secret ? safeStorage.decryptString(Buffer.from(stored.secret, 'base64')) : ''; } catch { apiKey = ''; }
   recent = readJson(path.join(userDir(), 'recent.json'), []);
+  try {
+    const storage=process.env.PDFSANDWICH_DATA_DIR?path.join(userDir(),'library-files'):path.join(app.isPackaged?path.dirname(app.getPath('exe')):root,'文献库');
+    library=new Library(path.join(userDir(),'library.json'),storage);library.migrate(recent);
+  } catch(error){libraryError=error.message;}
   protocol.handle('pdfsandwich', async request => {
     const file = files.get(new URL(request.url).pathname.slice(1)); if (!file) return new Response('Not found', { status: 404 });
     try {
@@ -318,6 +414,7 @@ app.whenReady().then(() => {
       if (savePromise) await savePromise;
       await stopTranslation();
       await Promise.allSettled([...mappingTasks]);
+      await translationSaver.flush();
       const waitUntil = Date.now() + 30000;
       while (pending.size) {
         if (Date.now() > waitUntil) throw new Error('文档仍在处理，请稍后重试。');
@@ -342,7 +439,7 @@ app.whenReady().then(() => {
   win.webContents.on('will-navigate', event => event.preventDefault());
   ipcMain.handle('pdfsandwich:call', async (event, action, args) => { if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame || !Object.hasOwn(actions, action)) throw new Error('未知操作。'); if (updates.snapshot().status === 'installing' && !['updateState', 'state'].includes(action)) throw new Error('正在准备安装更新，请稍候。'); return actions[action](args || {}); });
   if (process.env.PDFSANDWICH_DEV_URL === 'http://127.0.0.1:5173') win.loadURL(process.env.PDFSANDWICH_DEV_URL); else win.loadFile(path.join(root, 'dist', 'index.html'));
-  win.on('close', event => { if (stopping) return; event.preventDefault(); if (updates.snapshot().status === 'installing') return; mayLeave().then(async yes => { if (yes) { stopping = true; await stopTranslation(); worker?.kill(); win.destroy(); app.quit(); } }).catch(error => dialog.showErrorBox('保存失败', redact(error.message))); });
+  win.on('close', event => { if (stopping) return; event.preventDefault(); if (updates.snapshot().status === 'installing') return; mayLeave().then(async yes => { if (yes) { stopping = true; await stopTranslation(); await Promise.allSettled([...mappingTasks]); await translationSaver.flush(); worker?.kill(); win.destroy(); app.quit(); } }).catch(error => dialog.showErrorBox('保存失败', redact(error.message))); });
   const resumeFile = path.join(userDir(), 'resume-update.json');
   const resume = readJson(resumeFile, null);
   if (fs.existsSync(resumeFile)) fs.unlinkSync(resumeFile);

@@ -17,7 +17,7 @@ try {
   await app.evaluate(({ app }) => {
     const updater = process.mainModule.require(app.getAppPath() + '/node_modules/electron-updater').autoUpdater;
     global.testUpdater = updater;
-    updater.checkForUpdates = async () => { updater.emit('update-available', { version: '0.5.0' }); return {}; };
+    updater.checkForUpdates = async () => { updater.emit('update-available', { version: '9.0.0' }); return {}; };
     updater.downloadUpdate = async () => { updater.emit('download-progress', { percent: 40, transferred: 4e6, total: 1e7, bytesPerSecond: 2e6 }); return []; };
     updater.quitAndInstall = () => { global.installRequested = true; };
   });
@@ -25,7 +25,7 @@ try {
   await page.getByRole('button', { name: '下载更新', exact: true }).click();
   await page.getByRole('progressbar', { name: '更新下载进度' }).waitFor();
   await page.screenshot({ path: 'test-results/update-light.png' });
-  await app.evaluate(() => global.testUpdater.emit('update-downloaded', { version: '0.5.0' }));
+  await app.evaluate(() => global.testUpdater.emit('update-downloaded', { version: '9.0.0' }));
   await page.getByRole('button', { name: '重启并安装', exact: true }).waitFor();
   await page.getByRole('checkbox', { name: '自动检查新版本' }).click();
   await page.waitForFunction(()=>document.querySelector('.update-option input')?.checked);

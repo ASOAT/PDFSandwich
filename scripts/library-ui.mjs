@@ -1,0 +1,51 @@
+import {_electron as electron} from 'playwright';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import {execFileSync} from 'node:child_process';
+const root=process.cwd(),profile=await fs.mkdtemp(path.join(root,'local-data','library-ui-'));
+const sourceFolder=path.join(profile,'originals');
+execFileSync(path.join(root,'.venv/Scripts/python.exe'),['scripts/library-fixture.py',sourceFolder]);
+await fs.writeFile(path.join(profile,'updates.json'),JSON.stringify({autoCheck:false}));
+await fs.writeFile(path.join(profile,'settings.json'),JSON.stringify({provider:'local',autoTranslate:false,saveTranslation:false}));
+const originals=await Promise.all([1,2,3].map(i=>fs.readFile(path.join(sourceFolder,`example-${i}.pdf`))));
+const exe=process.env.PDFSANDWICH_TEST_EXE;let app,page;const errors=[];
+async function launch(){app=await electron.launch({...(exe?{executablePath:path.resolve(exe)}:{args:['.']}),cwd:root,env:{...process.env,PDFSANDWICH_DATA_DIR:profile},timeout:60000});page=await app.firstWindow();page.setDefaultTimeout(15000);page.on('pageerror',e=>errors.push(e.message));await page.getByRole('heading',{name:'全部文献'}).waitFor();}
+const call=(action,args)=>page.evaluate(({action,args})=>window.pdfsandwich.call(action,args),{action,args});
+async function until(check){const end=Date.now()+40000;while(Date.now()<end){const s=await call('state');if(check(s))return s;await new Promise(resolve=>setTimeout(resolve,100));}throw Error('State timeout');}
+const checkPdf=file=>JSON.parse(execFileSync(path.join(root,'.venv/Scripts/python.exe'),['-c','import json,pymupdf,sys; d=pymupdf.open(sys.argv[1]); print(json.dumps({"pages":[p.get_text() for p in d],"annotations":[len(list(p.annots() or [])) for p in d]},ensure_ascii=True))',file],{encoding:'utf8'}));
+try{
+ await launch();
+ const result=await call('libraryImport',{paths:[1,2,3].map(i=>path.join(sourceFolder,`example-${i}.pdf`))});assert.equal(result.imported.length,3);assert.equal(result.errors.length,0);
+ const id=result.imported[0],managed=result.library.documents.find(item=>item.id===id);assert.ok(managed.path.startsWith(path.join(profile,'library-files')));
+ assert.equal((await call('libraryImport',{paths:[path.join(sourceFolder,'example-1.pdf')]})).library.documents.length,3);
+ await page.getByRole('button',{name:'文献库',exact:true}).click();
+ await page.getByRole('button',{name:'新建分类',exact:true}).click();await page.getByRole('textbox',{name:'分类名称'}).fill('计算机与机器人');await page.getByRole('button',{name:'保存分类'}).click();
+ await page.getByRole('button',{name:/^计算机与机器人/}).click();await page.getByRole('button',{name:'新建分类',exact:true}).click();await page.getByRole('textbox',{name:'分类名称'}).fill('最优控制');await page.getByRole('button',{name:'保存分类'}).click();
+ await page.getByRole('button',{name:/^全部文献/}).click();
+ await page.getByRole('row',{name:'文献 Optimal Control Notes',exact:true}).click();
+ await page.getByRole('textbox',{name:'文献年份'}).fill('2026');await page.getByRole('textbox',{name:'文献年份'}).press('Tab');
+ await page.getByRole('textbox',{name:'添加标签',exact:true}).fill('待读');await page.getByRole('textbox',{name:'添加标签',exact:true}).press('Enter');
+ await page.getByRole('checkbox',{name:'分类 最优控制',exact:true}).click();await page.waitForFunction(()=>document.querySelector('[aria-label="分类 最优控制"]')?.checked);
+ await page.getByRole('checkbox',{name:'选择全部文献'}).check();await page.getByRole('textbox',{name:'批量标签'}).fill('阅读计划');await page.getByRole('button',{name:'添加标签',exact:true}).click();
+ await page.getByRole('textbox',{name:'搜索文献库'}).fill('Control 待读');await page.getByRole('row',{name:'文献 Optimal Control Notes',exact:true}).waitFor();assert.equal(await page.locator('.library-table tbody tr').count(),1);
+ await page.getByRole('button',{name:'清除搜索'}).click();await page.getByRole('row',{name:'文献 Optimal Control Notes',exact:true}).click();
+ await page.screenshot({path:'test-results/library-light.png'});await page.getByRole('button',{name:'切换深色主题'}).click();await page.screenshot({path:'test-results/library-dark.png'});await page.getByRole('button',{name:'切换浅色主题'}).click();
+ await page.getByRole('button',{name:'打开阅读',exact:true}).click();await page.getByRole('textbox',{name:'当前页码'}).waitFor();
+ let state=await call('state');const draftFile=path.join(profile,'documents',state.doc.id,'draft.json');let draft=JSON.parse(await fs.readFile(draftFile,'utf8'));
+ draft.translations={0:{path:path.join(sourceFolder,'translated-page.pdf'),status:'ready',qualityVersion:7}};await fs.writeFile(draftFile,JSON.stringify(draft));
+ const collision=managed.path.replace(/\.pdf$/i,'.zh.pdf');await fs.writeFile(collision,'Existing user file');
+ await call('libraryOpen',{id});await page.getByRole('button',{name:'翻译与应用设置'}).click();await page.getByRole('checkbox',{name:/自动保存中文 PDF/}).check();await page.getByRole('button',{name:'保存设置',exact:true}).click();
+ state=await until(s=>s.doc.autoSave?.status==='saved');const output=state.doc.autoSave.path;assert.equal(path.basename(output),'example-1.zh (2).pdf');assert.equal(await fs.readFile(collision,'utf8'),'Existing user file');
+ let pdf=checkPdf(output);assert.equal(pdf.pages.length,3);assert.ok(pdf.pages[0].includes('最优控制笔记'));assert.ok(pdf.pages[1].includes('Original page 2'));
+ const stamp=state.doc.autoSave.updatedAt;await call('annotate',{item:{id:'library-note',kind:'note',page:1,color:'#edba39',content:'Library test note',origin:'en',en:{rects:[[55,180,70,195]]},accuracy:'position'}});state=await until(s=>s.doc.autoSave?.status==='saved'&&s.doc.autoSave.updatedAt>stamp);assert.equal(checkPdf(output).annotations[1],1);
+ await call('save');await page.getByRole('textbox',{name:'当前页码'}).fill('2');await page.getByRole('textbox',{name:'当前页码'}).press('Enter');await until(s=>s.doc.currentPage===1);
+ await page.getByRole('button',{name:'文献库',exact:true}).click();await page.getByRole('row',{name:'文献 Optimal Control Notes',exact:true}).dblclick();await until(s=>s.doc.currentPage===1);
+ await app.evaluate(({app})=>app.exit(0));draft=JSON.parse(await fs.readFile(draftFile,'utf8'));draft.translations[1]={path:path.join(sourceFolder,'translated-page.pdf'),status:'ready',qualityVersion:7};await fs.writeFile(draftFile,JSON.stringify(draft));await launch();await call('libraryOpen',{id});await call('translationSaveRetry');pdf=checkPdf(output);assert.ok(pdf.pages[1].includes('最优控制笔记'));
+ await fs.appendFile(output,'\n% External edit');await call('translationSaveRetry');state=await until(s=>s.doc.autoSave?.status==='error');assert.match(state.doc.autoSave.error,/其他程序修改/);
+ await page.getByRole('button',{name:'另存副本',exact:true}).click();state=await until(s=>s.doc.autoSave?.status==='saved');assert.notEqual(state.doc.autoSave.path,output);assert.ok((await fs.readFile(output,'utf8')).endsWith('% External edit'));
+ const savedPath=state.doc.autoSave.path;await call('settings',{...state.settings,saveTranslation:false});const before=await fs.stat(savedPath);await call('editAnnotation',{id:'library-note',content:'Changed while autosave disabled'});await call('translationSaveRetry');assert.equal((await fs.stat(savedPath)).mtimeMs,before.mtimeMs);await call('save');
+ await app.evaluate(({app})=>app.exit(0));await launch();const reopened=await call('libraryState');assert.equal(reopened.documents.length,3);assert.equal(reopened.collections.length,2);assert.ok(reopened.documents.every(item=>item.tags.includes('阅读计划')));assert.equal(reopened.documents.find(item=>item.id===id).year,'2026');
+ for(let i=0;i<3;i++)assert.deepEqual(await fs.readFile(path.join(sourceFolder,`example-${i+1}.pdf`)),originals[i]);
+ assert.deepEqual(errors,[]);const report={packaged:!!exe,profile,importCopies:true,deduplicated:true,nestedCollections:true,batchTags:true,search:true,metadataSurvivesRestart:true,automaticPartialTranslation:true,annotationsSaved:true,externalFilesPreserved:true,disableAutosave:true,originalsUnchanged:true,errors};await fs.writeFile('test-results/library-ui.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report));
+}catch(error){await page?.screenshot({path:'test-results/library-failure.png'}).catch(()=>{});throw error;}finally{await app?.evaluate(({app})=>app.exit(0)).catch(()=>{});}

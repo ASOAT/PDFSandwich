@@ -86,6 +86,18 @@ def inspect(path):
                 "baseline": baseline, "stamp": stamp(path), "size": Path(path).stat().st_size}
 
 
+def catalog(path):
+    with require_pdf(path) as doc:
+        return {'path':str(Path(path).resolve()),'name':Path(path).name,'pages':len(doc),
+                'size':Path(path).stat().st_size,'title':doc.metadata.get('title',''),
+                'author':doc.metadata.get('author',''),'stamp':stamp(path),'id':document_id(path)}
+
+
+def sync_translation(**kwargs):
+    from translation_file import sync_translation as sync
+    return sync(**kwargs)
+
+
 def validate_annotation(item, page_count):
     if not isinstance(item.get("page"), int) or not 0 <= item["page"] < page_count:
         raise ValueError("标记页码无效。")

@@ -47,15 +47,15 @@
         "description": "支持本地离线翻译、当前页优先翻译、双向高亮与批注、同步滚动的 Windows 中英对照 PDF 阅读器。",
         "applicationCategory": "ProductivityApplication",
         "operatingSystem": "Windows 10, Windows 11 (x64)",
-        "softwareVersion": "0.4.2",
+        "softwareVersion": "0.5.0",
         "inLanguage": "zh-CN",
         "isAccessibleForFree": true,
         "license": "https://github.com/ASOAT/PDFSandwich/blob/main/LICENSE",
-        "downloadUrl": "https://github.com/ASOAT/PDFSandwich/releases/download/v0.4.2/PDFSandwich-Setup-0.4.2.exe",
-        "releaseNotes": "https://github.com/ASOAT/PDFSandwich/releases/tag/v0.4.2",
+        "downloadUrl": "https://github.com/ASOAT/PDFSandwich/releases/download/v0.5.0/PDFSandwich-Setup-0.5.0.exe",
+        "releaseNotes": "https://github.com/ASOAT/PDFSandwich/releases/tag/v0.5.0",
         "screenshot": "https://asoat.github.io/PDFSandwich/reader-light.png",
         "sameAs": "https://github.com/ASOAT/PDFSandwich",
-        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD", "url": "https://github.com/ASOAT/PDFSandwich/releases/tag/v0.4.2" }
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD", "url": "https://github.com/ASOAT/PDFSandwich/releases/tag/v0.5.0" }
       }
     ]
   }
@@ -69,10 +69,10 @@
   </header>
   <main>
     <section class="hero wrap">
-      <a class="release" href="https://github.com/ASOAT/PDFSandwich/releases/tag/v0.4.2"><span class="dot"></span> v0.4.2 现已发布 <span aria-hidden="true">→</span></a>
+      <a class="release" href="https://github.com/ASOAT/PDFSandwich/releases/tag/v0.5.0"><span class="dot"></span> v0.5.0 现已发布 <span aria-hidden="true">→</span></a>
       <h1>英文原文，<br><em>中文对照。</em></h1>
       <p class="intro">PDFSandwich，开源 Windows 中英对照 PDF 阅读器。<br>本地离线翻译论文与教材，左右同步浏览、高亮与批注。</p>
-      <div class="actions"><a class="download" href="https://github.com/ASOAT/PDFSandwich/releases/download/v0.4.2/PDFSandwich-Setup-0.4.2.exe"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 15v5h16v-5"/></svg> 下载 Windows 版</a><a class="source" href="https://github.com/ASOAT/PDFSandwich">查看源代码 <span aria-hidden="true">↗</span></a></div>
+      <div class="actions"><a class="download" href="https://github.com/ASOAT/PDFSandwich/releases/download/v0.5.0/PDFSandwich-Setup-0.5.0.exe"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 15v5h16v-5"/></svg> 下载 Windows 版</a><a class="source" href="https://github.com/ASOAT/PDFSandwich">查看源代码 <span aria-hidden="true">↗</span></a></div>
       <p class="download-note">Windows 10 / 11 · x64 · AGPL-3.0 开源</p>
       <div class="preview" aria-label="PDFSandwich 软件界面">
         <div class="preview-bar"><div class="window-dots"><i></i><i></i><i></i></div><span>原文与译文 · 同步滚动</span><div class="preview-tabs" role="group" aria-label="预览主题"><button data-preview="light" aria-pressed="true">浅色</button><button data-preview="dark" aria-pressed="false">深色</button></div></div>
@@ -90,6 +90,11 @@
       </div>
     </section>
 
+    <section id="library" class="start wrap">
+      <div><span class="label">文献管理</span><h2>把论文和译文<br>整理到同一个库。</h2><p>分类支持子分类，一份文献可拥有多个标签。按标题、作者或标签搜索，再接着上次的位置阅读。</p></div>
+      <div><img src="library-light.png" width="1464" height="921" alt="PDFSandwich 文献库：左侧分类和标签，中间文献列表，右侧编辑文献信息。" loading="lazy" style="width:100%;height:auto;border-radius:10px;border:1px solid var(--border)"><p>导入时复制到软件文件夹下的文献库。开启“自动保存中文 PDF”后，译文逐页更新到库内原文旁；未翻译页保留英文。</p></div>
+    </section>
+
     <section id="start" class="start wrap">
       <div><span class="label">开始使用</span><h2>安装后，打开你的 PDF。</h2><p>不需要单独安装 Python 或 Node.js。<br>本地翻译不需要 API 密钥，也不按字数收费。</p><a class="text-link" href="https://github.com/ASOAT/PDFSandwich#使用">阅读完整使用说明 <span aria-hidden="true">↗</span></a></div>
       <ol class="steps"><li><span>1</span><div><h3>安装 Windows 版</h3><p>下载并运行安装程序。当前安装包未签名，可在 Release 页面核对 SHA-256。</p></div></li><li><span>2</span><div><h3>首次使用下载翻译资源</h3><p>本地 HY-MT 模型约 1.1 GB，另需运行时、排版资源与词句对应模型。下载完成后可离线使用。</p></div></li><li><span>3</span><div><h3>打开可选中文字的英文 PDF</h3><p>Ctrl + 滚轮调整大小，翻页自动优先翻译。选择标记工具添加批注，Ctrl + S 写入原 PDF。</p></div></li></ol>
@@ -101,11 +106,11 @@
       <details><summary>文档和批注会上传吗？</summary><p>本地模式下，文档处理、译文缓存和批注都留在本机。云端模式会向你选择的服务发送待翻译文字。密钥保存在本机，不会写入 PDF 或上传到本项目。</p></details>
       <details><summary>支持多大的文档？</summary><p>阅读界面只绘制附近页面，翻译按页进行。已测试 1000 页、约 95 MiB 的合成 PDF；真实文件的表现取决于图片尺寸、字体和页面复杂度。首次加载模型及复杂页面的翻译需要等待。</p></details>
       <details><summary>翻译和标记能完全对应吗？</summary><p>不能保证。复杂公式、跨页句子或特殊字体仍可能导致排版与翻译偏差。词句自动对应也有误差，无法可靠匹配时会提示校正；可以选择另一侧的文字手动指定。请保留英文原文作为参照。</p></details>
-      <details><summary>以后如何更新软件？</summary><p>0.4.0 起可在软件设置中检查、下载和安装新版本。优先下载变化部分，必要时自动回退完整包；模型、批注和设置会保留。0.3.x 用户需要手动安装一次 0.4.2，后续无需再去网页下载安装包。</p></details>
+      <details><summary>以后如何更新软件？</summary><p>0.4.0 起可在软件设置中检查、下载和安装新版本。优先下载变化部分，必要时自动回退完整包；模型、批注和设置会保留。0.3.x 用户需要手动安装一次 0.5.0，后续无需再去网页下载安装包。</p></details>
       <details><summary>能处理扫描件、编辑原文正文吗？</summary><p>当前面向可选中文字的 PDF，不包含 OCR。编辑功能是高亮、下划线、手绘与文字批注；不提供改写原文正文或数字签名编辑。图片与公式不送去翻译。</p></details>
     </section>
 
-    <section class="closing wrap"><div><span class="label">PDFSandwich · v0.4.2</span><h2>打开下一篇论文。</h2></div><a class="download" href="https://github.com/ASOAT/PDFSandwich/releases/download/v0.4.2/PDFSandwich-Setup-0.4.2.exe">下载 Windows 版 <span aria-hidden="true">↓</span></a></section>
+    <section class="closing wrap"><div><span class="label">PDFSandwich · v0.5.0</span><h2>打开下一篇论文。</h2></div><a class="download" href="https://github.com/ASOAT/PDFSandwich/releases/download/v0.5.0/PDFSandwich-Setup-0.5.0.exe">下载 Windows 版 <span aria-hidden="true">↓</span></a></section>
   </main>
   <footer class="wrap"><a class="brand" href="#"><img src="icon.png" alt="" width="28" height="28">PDFSandwich</a><span>Windows 中英对照 PDF 阅读器</span><div><a href="https://github.com/ASOAT/PDFSandwich/releases">版本记录</a><a href="https://github.com/ASOAT/PDFSandwich/issues">反馈问题</a><a href="https://github.com/ASOAT/PDFSandwich/blob/main/LICENSE">AGPL-3.0</a><a href="sitemap.xml">网站地图</a></div></footer>
 </body>

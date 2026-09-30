@@ -1,6 +1,6 @@
 {
   "name": "pdfsandwich",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "private": true,
   "description": "Windows bilingual PDF reader with synchronized annotations",
   "author": "PDFSandwich contributors",
@@ -14,6 +14,7 @@
     "test": "node --test tests/*.test.cjs",
     "test:python": ".venv\\Scripts\\python.exe -m pytest tests -q",
     "test:ui": "node scripts/smoke.mjs",
+    "clean:releases": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/clean-releases.ps1",
     "build:backend": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-backend.ps1",
     "build:licenses": ".venv\\Scripts\\python.exe scripts/collect-licenses.py",
     "package": "npm run build && electron-builder --win dir",
@@ -69,7 +70,8 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "differentialPackage": true
+      "differentialPackage": true,
+      "include": "build-resources/installer.nsh"
     },
     "artifactName": "PDFSandwich-Setup-${version}.${ext}",
     "publish": [
