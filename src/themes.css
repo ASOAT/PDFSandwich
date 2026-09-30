@@ -73,3 +73,13 @@
 @media(max-width:1150px){.toolbar{gap:6px}.toolbar-group{padding-right:8px;gap:3px}.tools{gap:5px}.pane-headings>div:last-child{padding-left:58px}.pane-headings>div{gap:6px}.translation-actions{gap:3px}.footer-right{font-size:10px}.reader-footer{padding:0 12px;font-size:10px}}
 .correction-banner{position:fixed;bottom:52px;left:50%;transform:translateX(-50%);z-index:25;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:14px 20px;box-shadow:0 5px 24px #0002;font-size:13px;display:flex;align-items:center;gap:20px}
 .correction-banner button,.correct-mark{color:var(--accent);font-size:11px;text-decoration:underline;text-underline-offset:3px}
+
+.update-badge{font-size:11px;color:var(--accent);background:var(--soft);border:1px solid var(--border);border-radius:6px;padding:7px 10px;white-space:nowrap}
+.update-card{padding:18px;margin:22px 0;border:1px solid var(--border);border-radius:9px;background:var(--surface)}
+.update-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.update-heading h3{margin:0;font-size:14px;color:var(--text);font-weight:600}.update-heading span{font-size:11px;color:var(--subtle)}
+.update-card p{font-size:12px;line-height:1.7;color:var(--text);margin:12px 0}.update-card small{display:block;font-size:11px;line-height:1.8;color:var(--subtle);margin-top:10px}
+.update-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px}.update-release{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted)}
+.update-option{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);margin-top:16px}.update-option input{accent-color:var(--accent)}
+.update-progress progress{display:block;width:100%;height:7px;accent-color:var(--accent);margin:12px 0 8px}.update-progress>div{display:flex;justify-content:space-between;font-size:10px;color:var(--subtle)}.update-card .update-error{color:#b87843}
+
+.settings-modal{scroll-padding-bottom:85px}.update-card{scroll-margin-bottom:85px}

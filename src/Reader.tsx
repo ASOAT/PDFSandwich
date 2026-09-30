@@ -2,11 +2,12 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, forwardRef, useI
 import { TextLayer, AnnotationMode, type PDFPageProxy } from 'pdfjs-dist';
 import { Languages, LoaderCircle, MessageSquare, RotateCcw } from 'lucide-react';
 import { acquirePdf, clearPdfCache } from './pdf';
-import { fromView, toView, transformRect, viewSize } from './geometry';
+import { selectionMarks } from './selection';
+import { fromView, toView, transformRect, viewSize, mergeRects } from './geometry';
 import type { Document, Mark, PageInfo, Point, Rect, Side, Tool, Match } from './types';
 
 export type ReaderHandle = { go: (page: number, fraction?: number) => void; captureZoomAnchor: (x?: number, y?: number) => void };
-type Props = { doc: Document; side: Side; theme: 'light' | 'dark'; zoom: number; tool: Tool; color: string; marks: Mark[]; matches: Match[]; onPosition: (page: number, fraction: number) => void; onWheelZoom: (factor: number, x: number, y: number) => void; onMark: (mark: Mark) => void; onSelectMark: (id: string) => void; onTranslate: (page: number) => void; onError: (message: string) => void };
+type Props = { doc: Document; side: Side; theme: 'light' | 'dark'; zoom: number; tool: Tool; color: string; marks: Mark[]; matches: Match[]; onPosition: (page: number, fraction: number) => void; onWheelZoom: (factor: number, x: number, y: number) => void; onMark: (mark: Mark | Mark[]) => void; onSelectMark: (id: string) => void; onTranslate: (page: number) => void; onError: (message: string) => void };
 
 function PdfPage({ doc, side, theme, page: index, scale, info, tool, color, marks, matches, onMark, onSelectMark, onError }: Omit<Props,'zoom'|'onPosition'|'onTranslate'> & { page: number; scale: number; info: PageInfo }) {
   const canvas = useRef<HTMLCanvasElement>(null), text = useRef<HTMLDivElement>(null), surface = useRef<HTMLDivElement>(null);
@@ -42,18 +43,8 @@ function PdfPage({ doc, side, theme, page: index, scale, info, tool, color, mark
   }, [url, index, side, scale, info.rotation, theme]);
   const add = (kind: Mark['kind'], rects: Rect[], paths?: Point[][], selectedText?: string) => onMark({ id: crypto.randomUUID(), page: index, kind, color, width: 1.6, content: '', origin: side, [side]: { rects, ...(paths ? { paths } : {}) }, accuracy: 'pending', selectedText });
   const point = (event: React.PointerEvent): Point => { const bounds = surface.current!.getBoundingClientRect(); return fromView([Math.max(0,Math.min(size[0],(event.clientX-bounds.left)/scale)),Math.max(0,Math.min(size[1],(event.clientY-bounds.top)/scale))],info); };
-  const finishSelection = () => {
-    if (tool !== 'highlight' && tool !== 'underline') return;
-    const selection = window.getSelection(); if (!selection || selection.isCollapsed || !selection.rangeCount) return;
-    const range = selection.getRangeAt(0);
-    if (!text.current?.contains(range.startContainer) || !text.current?.contains(range.endContainer)) { onError('请在同一页内选择文字；跨页内容请分别标记。'); return; }
-    const bounds = surface.current!.getBoundingClientRect();
-    const rects = [...range.getClientRects()].filter(r=>r.width>1 && r.height>2).map(r => transformRect([(r.left-bounds.left)/scale,(r.top-bounds.top)/scale,(r.right-bounds.left)/scale,(r.bottom-bounds.top)/scale],info,true));
-    const unique = rects.filter((rect,index)=>rects.findIndex(other=>other.every((value,i)=>Math.abs(value-rect[i])<.1))===index);
-    if (unique.length) add(tool, unique, undefined, selection.toString()); selection.removeAllRanges();
-  };
   const pathData = (points: Point[]) => points.map((p,i) => { const [x,y] = toView(p,info); return `${i?'L':'M'}${x},${y}`; }).join(' ');
-  return <div ref={surface} className={`pdf-surface tool-${tool}`} data-page={index+1} data-side={side} style={{ width: size[0]*scale, height: size[1]*scale }} onMouseUp={finishSelection}
+  return <div ref={surface} className={`pdf-surface tool-${tool}`} data-page={index+1} data-side={side} style={{ width: size[0]*scale, height: size[1]*scale }}
     onPointerDown={e=>{ if (rendering || error) return; if (tool==='ink') { e.preventDefault(); surface.current!.setPointerCapture(e.pointerId); drawing.current=true; pen.current=[point(e)]; setStroke(pen.current); } else if (tool==='note') { e.preventDefault(); const [x,y]=point(e); add('note',[[x,y,x+18,y+18]]); } }}
     onPointerMove={e=>{if(drawing.current){pen.current=[...pen.current,point(e)];setStroke(pen.current);}}}
     onPointerCancel={()=>{drawing.current=false;pen.current=[];setStroke([]);}}
@@ -61,8 +52,8 @@ function PdfPage({ doc, side, theme, page: index, scale, info, tool, color, mark
     <canvas ref={canvas}/><div ref={text} className="textLayer"/>
     <svg className="mark-layer" viewBox={`0 0 ${size[0]} ${size[1]}`}>
       {matches.flatMap((match,i)=>match.rects.map((rect,j)=>{const r=transformRect(rect,info);return <rect key={`s${i}-${j}`} x={r[0]} y={r[1]} width={r[2]-r[0]} height={r[3]-r[1]} fill="#ff992e" opacity=".35"/>;}))}
-      {marks.map(mark=>{const geo=mark[side];if(!geo)return null;return <g key={mark.id} data-mark-id={mark.id} className={tool==='select'?'mark-clickable':''} onClick={e=>{if(tool==='select'){e.stopPropagation();onSelectMark(mark.id);}}}>
-        {mark.kind==='ink'?geo.paths?.map((points,i)=><path key={i} d={pathData(points)} fill="none" stroke={mark.color} strokeWidth={mark.width} strokeLinecap="round" strokeLinejoin="round"/>):geo.rects.map((rect,i)=>{const r=transformRect(rect,info);return mark.kind==='note'?<g key={i} transform={`translate(${r[0]},${r[1]})`}><rect width="18" height="18" rx="4" fill={mark.color}/><path d="M4 5H14M4 9H12M4 13H9" stroke="white" strokeWidth="1.4"/></g>:mark.kind==='underline'?<line key={i} x1={r[0]} x2={r[2]} y1={r[3]-1} y2={r[3]-1} stroke={mark.color} strokeWidth="1.2"/>:<rect key={i} x={r[0]} y={r[1]} width={r[2]-r[0]} height={r[3]-r[1]} fill={mark.color} opacity=".32"/>;})}
+      {marks.map(mark=>{const geo=mark[side];if(!geo)return null;return <g key={mark.id} data-mark-id={mark.id} className={tool==='select'?'mark-clickable':''} opacity={mark.kind==='highlight'?.32:1} onClick={e=>{if(tool==='select'){e.stopPropagation();onSelectMark(mark.id);}}}>
+        {mark.kind==='ink'?geo.paths?.map((points,i)=><path key={i} d={pathData(points)} fill="none" stroke={mark.color} strokeWidth={mark.width} strokeLinecap="round" strokeLinejoin="round"/>):mergeRects(geo.rects).map((rect,i)=>{const r=transformRect(rect,info);return mark.kind==='note'?<g key={i} transform={`translate(${r[0]},${r[1]})`}><rect width="18" height="18" rx="4" fill={mark.color}/><path d="M4 5H14M4 9H12M4 13H9" stroke="white" strokeWidth="1.4"/></g>:mark.kind==='underline'?<line key={i} x1={r[0]} x2={r[2]} y1={r[3]-1} y2={r[3]-1} stroke={mark.color} strokeWidth="1.2"/>:<rect key={i} x={r[0]} y={r[1]} width={r[2]-r[0]} height={r[3]-r[1]} fill={mark.color}/>;})}
       </g>;})}
       {stroke.length>1&&<path d={pathData(stroke)} fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round"/>}
     </svg>
@@ -123,13 +114,27 @@ export const Reader = forwardRef<ReaderHandle, Props>((props, ref) => {
     node.addEventListener('wheel',wheel,{passive:false});
     return()=>node.removeEventListener('wheel',wheel);
   },[]);
+  const [selectionAnchor,setSelectionAnchor]=useState<number|null>(null);
+  const finishSelection=useRef<(event:MouseEvent)=>void>(()=>{});
+  finishSelection.current=event=>{
+    const selection=window.getSelection(),node=viewport.current;
+    try{
+      if(!node||!selection||selection.isCollapsed||!selection.rangeCount||!['highlight','underline'].includes(props.tool))return;
+      if(selectionAnchor===null&&!node.contains(event.target as Node))return;
+      const range=selection.getRangeAt(0);
+      const marks=selectionMarks(node,range,doc,side,scale,props.tool as 'highlight'|'underline',props.color);
+      if(marks.length){selection.removeAllRanges();props.onMark(marks.length===1?marks[0]:marks);}
+    }finally{setSelectionAnchor(null);}
+  };
+  useEffect(()=>{const finish=(event:MouseEvent)=>finishSelection.current(event);window.addEventListener('mouseup',finish);return()=>window.removeEventListener('mouseup',finish);},[]);
+  useEffect(()=>setSelectionAnchor(null),[doc.sourceUrl,props.tool]);
   const begin=Math.max(0,indexAt(scrollTop)-1),end=Math.min(doc.pages.length-1,indexAt(scrollTop+height)+1);
-  return <div className="reader-scroll" ref={viewport} data-reader={side} onScroll={()=>{
+  return <div className="reader-scroll" ref={viewport} data-reader={side} onMouseDownCapture={event=>{if(['highlight','underline'].includes(props.tool)){const surface=(event.target as Element).closest<HTMLElement>('.pdf-surface');if(surface)setSelectionAnchor(Number(surface.dataset.page)-1);}}} onScroll={()=>{
     const top=viewport.current!.scrollTop;setScrollTop(top);
     if(ignoredTop.current!==null&&Math.abs(top-Math.min(ignoredTop.current,total-height))<2){ignoredTop.current=null;return;}
     ignoredTop.current=null;const page=indexAt(top+24),fraction=(top+24-offsets[page])/(viewSize(doc.pages[page])[1]*scale+40);onPosition(page,Math.max(0,fraction));
   }}><div className="page-stack" style={{height:total,minWidth:Math.max(width,maxWidth*scale+64)}}>
-    {Array.from({length:end-begin+1},(_,i)=>i+begin).map(page=>{const info=doc.pages[page],translation=doc.translations[page],ready=side==='en'||translation?.status==='ready';const [w,h]=viewSize(info);return <div key={`${doc.id}-${page}`} className="page-position" style={{top:offsets[page],width:w*scale,height:h*scale,left:'50%',transform:'translateX(-50%)'}}>
+    {[...new Set([...Array.from({length:end-begin+1},(_,i)=>i+begin),...(selectionAnchor===null?[]:[selectionAnchor])])].sort((a,b)=>a-b).map(page=>{const info=doc.pages[page],translation=doc.translations[page],ready=side==='en'||translation?.status==='ready';const [w,h]=viewSize(info);return <div key={`${doc.id}-${page}`} className="page-position" style={{top:offsets[page],width:w*scale,height:h*scale,left:'50%',transform:'translateX(-50%)'}}>
       <div className="page-number">{page+1} <span>/ {doc.pages.length}</span></div>
       {ready?<PdfPage {...props} page={page} info={info} scale={scale} marks={props.marks.filter(m=>m.page===page)} matches={side==='en'?props.matches.filter(m=>m.page===page):[]}/>:<div className="translation-placeholder" style={{height:h*scale}}>
         <div className={`placeholder-icon ${translation?.status==='translating'?'active':''}`}>{translation?.status==='translating'?<LoaderCircle className="spin" size={25}/>:<Languages size={25}/>}</div>

@@ -7,6 +7,7 @@ See `LICENSE`. Third-party components retain their respective licenses.
 | --- | --- | --- |
 | Mozilla PDF.js | 6.3.289 | https://github.com/mozilla/pdf.js — Apache-2.0 |
 | Electron | 44.4.5 | https://github.com/electron/electron — MIT; includes Chromium notices |
+| electron-updater | 6.8.9 | https://github.com/electron-userland/electron-builder — MIT |
 | React | 19.x | https://github.com/facebook/react — MIT |
 | Lucide | 0.577.x | https://github.com/lucide-icons/lucide — ISC |
 | PyMuPDF | 1.25.2 | https://github.com/pymupdf/PyMuPDF — AGPL-3.0/commercial dual licensing |

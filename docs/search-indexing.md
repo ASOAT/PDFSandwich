@@ -28,6 +28,8 @@
 2. 选择 HTML 标记验证，把 Google 提供的完整验证 meta 标签加入 `docs/index.html` 的 head 后发布，再完成验证。
 3. 提交 `sitemap.xml`，并在网址检查中请求首页编入索引。
 
+已部署本次提供的 HTML 验证文件 `google8d612db7cef52c87.html`，可继续在 Search Console 使用“HTML 文件”方式完成验证；验证文件须一直保留。
+
 验证标记可以交给项目维护者添加，不需要提供 Google 密码。网站公开可访问和搜索结果已收录是两件事；Google 说明抓取可能需要数天到数周，也可能不收录。
 
 参考：[IndexNow 协议](https://www.indexnow.org/documentation)、[Google 请求重新抓取](https://developers.google.com/search/docs/crawling-indexing/ask-google-to-recrawl)、[robots.txt 放置规则](https://developers.google.com/crawling/docs/robots-txt/create-robots-txt)。

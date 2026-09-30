@@ -147,6 +147,29 @@ def make_record(source, target, directory, progress, custom='', use_builtin=True
 
 
 def aligned_ranges(record, start, end, origin):
+    src,dst = ('source','target') if origin=='en' else ('target','source')
+    text,target = record[src],record[dst]
+    if compact(text[start:end]) == compact(text):
+        return [(0,len(target))] if compact(text) else []
+    pairs = anchored_pairs(record['source'],record['target'])
+    if origin=='zh':
+        pairs = [(right,left) for left,right in pairs]
+    complete = [((a,b),(c,d)) for (a,b),(c,d) in pairs
+                if max(a,start)<min(b,end) and compact(text[max(a,start):min(b,end)])==compact(text[a:b])]
+    if not complete:
+        return phrase_ranges(record,start,end,origin)
+    ranges = [target_span for _,target_span in complete]
+    cursor = start
+    for (a,b),_ in complete:
+        if cursor<a:
+            ranges.extend(phrase_ranges(record,cursor,min(a,end),origin))
+        cursor = max(cursor,b)
+    if cursor<end:
+        ranges.extend(phrase_ranges(record,cursor,end,origin))
+    return sorted(set(ranges))
+
+
+def phrase_ranges(record, start, end, origin):
     """Return possibly disjoint target ranges; do not underline intervening words."""
     src, dst = ('source','target') if origin == 'en' else ('target','source')
     text, target = record[src], record[dst]

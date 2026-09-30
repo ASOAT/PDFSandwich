@@ -105,3 +105,48 @@ def test_remapping_anchor_excludes_adjacent_line_without_selected_text():
         result=map_records(s,t,item,[record])
         assert result and result['accuracy']=='phrase'
         assert len(result['geometry']['rects'])==1
+
+
+def test_long_selection_spans_records_wrapped_lines_and_repeated_ranges():
+    from annotation_alignment import glyphs, boxes, coverage
+    with fitz.open() as src,fitz.open() as dst:
+        s=src.new_page();t=dst.new_page()
+        records=[
+            {'source':'A neural network learns useful patterns from many training examples. Each layer transforms its inputs and produces new features.',
+             'target':'神经网络从大量训练样本中学习有用的模式。每一层转换输入并产生新的特征。','terms':[]},
+            {'source':'Gradient descent adjusts the model parameters. The learning rate controls how far the parameters move at every optimization step.',
+             'target':'梯度下降调整模型参数。学习率控制每一步优化中参数移动的距离。','terms':[]}]
+        for i,record in enumerate(records):
+            y=60+i*160
+            assert s.insert_textbox(fitz.Rect(50,y,290,y+140),record['source'],fontsize=12)>=0
+            assert t.insert_textbox(fitz.Rect(50,y,290,y+140),record['target'],fontname='china-s',fontsize=12)>=0
+        _,source_chars=glyphs(s);_,target_chars=glyphs(t)
+        item={'origin':'en','selectedText':' '.join(r['source'] for r in records),'en':{'rects':boxes(source_chars)}}
+        result=map_records(s,t,item,records+[records[0]])
+        assert result and len(result['geometry']['rects'])>=4
+        rectangles=[fitz.Rect(r) for r in result['geometry']['rects']]
+        assert coverage(target_chars,rectangles)>.99
+        assert all((a&b).get_area()<.05 for i,a in enumerate(rectangles) for b in rectangles[i+1:])
+        reverse={'origin':'zh','selectedText':''.join(r['target'] for r in records),'zh':result['geometry']}
+        restored=map_records(t,s,reverse,records)
+        assert coverage(source_chars,[fitz.Rect(r) for r in restored['geometry']['rects']])>.99
+
+
+def test_complete_sentences_map_without_attention_even_inside_long_record():
+    record={'source':'First sentence describes training. Second sentence explains evaluation. Third sentence is outside.',
+            'target':'第一句描述训练。第二句解释评估。第三句不在选区中。','terms':[]}
+    end=record['source'].index(' Third')
+    ranges=aligned_ranges(record,0,end,'en')
+    assert ''.join(record['target'][a:b] for a,b in ranges)=='第一句描述训练。第二句解释评估。'
+    # A short unknown phrase must still not expand into an entire sentence.
+    assert aligned_ranges(record,6,14,'en')==[]
+
+
+def test_merge_rectangles_removes_overlap_without_joining_adjacent_lines_or_gaps():
+    from annotation_alignment import merge_rects
+    source=[[0,0,30,12],[20,.2,50,12.2],[0,0,30,12],[0,14,50,26],[65,0,80,12]]
+    result=merge_rects(source)
+    assert len(result)==3
+    assert result[0]==[0,0,50,12.2]
+    assert any(r[0]==65 for r in result)
+    assert any(r[1]==14 for r in result)

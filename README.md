@@ -2,19 +2,19 @@
 
 Windows 中英对照 PDF 阅读与批注工具。默认使用免费的本地 HY-MT 专用英译中模型，提供浅色和深色主题。
 
-[下载 v0.3.0](https://github.com/ASOAT/PDFSandwich/releases/tag/v0.3.0) · [产品介绍](https://asoat.github.io/PDFSandwich/) · [反馈问题](https://github.com/ASOAT/PDFSandwich/issues)
+[下载 v0.4.0](https://github.com/ASOAT/PDFSandwich/releases/tag/v0.4.0) · [产品介绍](https://asoat.github.io/PDFSandwich/) · [反馈问题](https://github.com/ASOAT/PDFSandwich/issues)
 
 ![PDFSandwich 中英对照阅读界面](docs/reader-light.png)
 
 ## 使用
 
-从 [GitHub Release](https://github.com/ASOAT/PDFSandwich/releases/latest) 下载 `PDFSandwich-Setup-0.3.0.exe`，适用于 Windows 10 / 11 x64。
+从 [GitHub Release](https://github.com/ASOAT/PDFSandwich/releases/latest) 下载 `PDFSandwich-Setup-0.4.0.exe`，适用于 Windows 10 / 11 x64。
 安装版不需要安装 Python、Node.js 或配置 API Key。当前安装包未签名，发布页附 SHA-256 校验文件、完整源码包和原创示例 PDF。
 
 1. 打开或拖入可选中文字的英文 PDF。
 2. 左侧原文、右侧中文。默认翻到哪里就优先翻译哪里；即使正在翻译整本，跳页也会让后台任务让出位置，先处理当前页，再继续邻页和剩余任务。
 3. 在任一侧滚动，另一侧跟随同一页及页内位置；顶部“同步阅读”可解除联动。
-4. 选择高亮、下划线、手绘或批注工具，在任一侧标记。文字批注内容保持原样。
+4. 选择高亮、下划线、手绘或批注工具，在任一侧标记。高亮/下划线支持整段、多段和跨页拖选，按页对应并可一次撤销；英文侧未翻译页面的标记会在翻译后补上。中文侧跨页选择要求经过的页面已翻译。文字批注内容保持原样。
 5. 点击“保存原 PDF”或按 **Ctrl+S**，将真正的 PDF 批注写回英文原文件。
    保存前自动在原文件旁的 `.pdfsandwich-backups` 目录创建备份。
 6. 完成整本翻译后，可导出中文 PDF 或中英交替页 PDF。
@@ -65,6 +65,18 @@ Gemini 免费额度预设需在 Google AI Studio 获取自己的密钥，受服�
 - 排版尽量保持原位，复杂 PDF 不能保证逐像素一致。整本按单页翻译，跨页上下文不参与翻译。
 - 已实测 1000 页、约 95 MiB 的合成文档。另已检查用户 474 页机器人学教材的目录、正文和公式样本页；没有翻译验收整本，不能保证所有页都具有相同性能。
 
+## 应用内更新
+
+从 0.4.0 起，启动后自动检查 GitHub 正式版，每六小时再次检查。发现新版本时，右上角显示更新入口，也可在“翻译与应用设置 → 软件更新”手动检查。
+
+点击“下载更新”后优先通过块差分下载变化内容，校验完整安装包后才允许“重启并安装”。缓存缺失、服务器不支持或增量失败时自动回退完整下载，仍在应用内完成。增量体积取决于版本变化，不能保证固定比例；下载可以取消或失败后重试。
+
+安装前可保存原 PDF、保留草稿或取消安装；保存失败会阻止安装。安装完成后恢复原文档，保留设置、批注草稿、译文与已下载模型。普通退出不会自动安装。自动检查只访问 GitHub 版本信息，不上传 PDF 内容；可在设置里关闭。
+
+**0.3.x 及更早版本没有更新入口，需要手动安装一次 0.4.0；以后从软件内更新。**
+
+维护者需在每个正式 Release 同时上传安装包、同名 `.exe.blockmap` 和 `latest.yml`，并保留旧版本的 blockmap。不要重新压缩或重命名构建产物；`latest.yml` 中的版本、文件名、SHA-512 和字节数由发布脚本核验。不要更改 appId、产品名或用户数据目录，否则会影响升级与缓存复用。
+
 ## 从源码运行（Windows x64）
 
 需要 Node.js 22.12+（本机验证为 24.15）、Python 3.12 和 Git。
@@ -92,6 +104,11 @@ node scripts/reading-smoke.mjs
 node scripts/quality-ui.mjs
 node scripts/precision-ui.mjs
 node scripts/release-ui.mjs
+.venv/Scripts/python.exe scripts/annotation-fixture.py
+node scripts/annotation-ui.mjs
+node scripts/update-ui.mjs
+# 先构建 0.4.0，并保留 release/0.3.0 的原安装包和 blockmap：
+node scripts/update-transfer-test.cjs
 # 设置 PDFSANDWICH_PRIORITY_PDF 为至少 26 页的测试 PDF 后：
 node scripts/priority-smoke.mjs
 node scripts/translation-smoke.mjs
@@ -108,14 +125,14 @@ UI 测试只修改测试 PDF 的副本，测试数据与缓存不提交。发布
 .venv/Scripts/python.exe scripts/create-icon.py
 npm run build:backend
 npm run build:licenses
-npm run dist -- --config.directories.output=release/0.3.0
+npm run dist -- '--config.directories.output=release/0.4.0'
 .venv/Scripts/python.exe scripts/source-bundle.py
 ```
 
 后端通过 PyInstaller 打包，再由 Electron Builder 生成 NSIS 安装程序。
 构建会核验并应用 BabelDOC 0.6.2 的两处导入替换：用经等价测试的轻量运算完成字形聚类和灰度相似度检查，避免首次排版加载不需要的大型计算库。
 构建输出在 `release/`，不提交二进制文件、模型、密钥或文档缓存。
-Release 的 `PDFSandwich-0.3.0-source.zip` 同时提供项目构建脚本及所封装 AGPL 依赖的对应源代码；模型与 llama.cpp 运行时另行下载，不封装在安装包中。
+Release 的 `PDFSandwich-0.4.0-source.zip` 同时提供项目构建脚本及所封装 AGPL 依赖的对应源代码；模型与 llama.cpp 运行时另行下载，不封装在安装包中。
 
 ## 设计与验证
 

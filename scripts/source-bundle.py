@@ -53,3 +53,15 @@ with zipfile.ZipFile(target,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=6
         'the documented per-page runtime adapters; their complete source is included.\n'
         'Model weights and llama.cpp are downloaded separately and are not in the installer.\n')
 print(json.dumps({'sourceBundle':str(target),'bytes':target.stat().st_size}),flush=True)
+
+# Keep manual downloads and the updater's metadata in one verified release set.
+artifacts=[(directory/f'PDFSandwich-Setup-{version}.exe',f'PDFSandwich-Setup-{version}.exe'),
+           (directory/f'PDFSandwich-Setup-{version}.exe.blockmap',f'PDFSandwich-Setup-{version}.exe.blockmap'),
+           (directory/'latest.yml','latest.yml'),(target,target.name),
+           (root/'tmp/pdfs/release-sample.pdf','PDFSandwich-demo.pdf')]
+checksums=[]
+for file,name in artifacts:
+    with file.open('rb') as stream:digest=hashlib.file_digest(stream,'sha256').hexdigest()
+    checksums.append(f'{digest}  {name}')
+(directory/'SHA256SUMS.txt').write_text('\n'.join(checksums)+'\n',encoding='utf-8')
+print('Generated SHA256SUMS.txt for installer, source, updater metadata and demo.',flush=True)

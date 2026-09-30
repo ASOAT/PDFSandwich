@@ -8,10 +8,11 @@ const readline = require('node:readline');
 const crypto = require('node:crypto');
 const { cacheKey, parseRange, validSettings, readingPosition, PageQueue } = require('./core.cjs');
 const { TranslationWorker } = require('./translation-worker.cjs');
+const { UpdateController } = require('./updates.cjs');
 protocol.registerSchemesAsPrivileged([{ scheme: 'pdfsandwich', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }]);
 if (process.env.PDFSANDWICH_DATA_DIR) app.setPath('userData', path.resolve(process.env.PDFSANDWICH_DATA_DIR));
 const root = path.join(__dirname, '..');
-let win, worker, seq = 0, doc = null, busy = false, stopping = false, savePromise = null;
+let win, worker, updates, seq = 0, doc = null, busy = false, stopping = false, savePromise = null;
 const queue = new PageQueue();
 const retranslatePages = new Set();
 let settings = { provider: 'local', localEngine: 'hy', useGlossary: true, glossary: '', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', autoTranslate: true }, apiKey = '', recent = [];
@@ -109,7 +110,7 @@ async function openDocument(file) {
   priorityPage = doc.currentPage;
   recent = [{ path: file, name: doc.name, pages: doc.pages.length, openedAt: Date.now() }, ...recent.filter(x => x.path !== file)].slice(0, 12);
   jsonWrite(path.join(userDir(), 'recent.json'), recent); persist(); emit();
-  for (const item of doc.annotations) if (!item.en || !item.zh || ['pending', 'unmatched'].includes(item.accuracy)) scheduleMap(item.id);
+  for (const item of doc.annotations) if (item.accuracy !== 'manual' && (!item.en || !item.zh || item.mappingVersion !== 2 || ['pending', 'unmatched'].includes(item.accuracy))) scheduleMap(item.id);
   return state();
 }
 async function completion(messages, maxTokens = 1500) {
@@ -132,8 +133,8 @@ async function mapItem(id, anchor) {
   let mapping = await python('map_annotation', args);
   const stillExists = () => doc === current && current.annotations.includes(item) && item.accuracy !== 'manual' && current.translations[item.page] === translation;
   if (!stillExists()) return;
-  if (JSON.stringify(item[target]) !== JSON.stringify(mapping.geometry) || item.accuracy !== mapping.accuracy) {
-    item[target] = mapping.geometry; item.accuracy = mapping.accuracy; changed();
+  if (JSON.stringify(item[target]) !== JSON.stringify(mapping.geometry) || item.accuracy !== mapping.accuracy || item.mappingVersion !== 2) {
+    item[target] = mapping.geometry; item.accuracy = mapping.accuracy; item.mappingVersion = 2; changed();
   }
   if (settings.provider === 'api' && mapping.accuracy === 'unmatched' && mapping.selectedText && apiKey) {
     try {
@@ -198,6 +199,13 @@ async function pump() {
 }
 
 const actions = {
+  updateState: () => updates.snapshot(),
+  updateCheck: () => updates.check(),
+  updateDownload: () => updates.download(),
+  updateCancel: () => updates.cancel(),
+  updateInstall: () => updates.install(),
+  updatePreference: ({ enabled }) => updates.preference(enabled),
+  updateRelease: () => shell.openExternal('https://github.com/ASOAT/PDFSandwich/releases/latest'),
   state: () => state(),
   open: args => openDocument(args?.path),
   save,
@@ -215,11 +223,36 @@ const actions = {
     prioritizePage(current);
   },
   stop: () => { autoPaused = true; return stopTranslation(); },
-  annotate: async ({ item }) => {
-    if (!doc || savePromise) throw new Error('请等待保存完成。');
-    if (!item || !['highlight','underline','ink','note'].includes(item.kind) || !['en','zh'].includes(item.origin) || !Number.isInteger(item.page) || item.page < 0 || item.page >= doc.pages.length) throw new Error('标记数据无效。');
-    if (doc.annotations.some(x => x.id === item.id)) throw new Error('标记 ID 重复。');
-    remember(); doc.annotations.push(item); changed(); scheduleMap(item.id);
+  annotate: async ({ item, items, documentUrl }) => {
+    if (!doc || savePromise || (documentUrl && documentUrl !== doc.sourceUrl)) throw new Error('文档已切换或正在保存，请重试。');
+    const current = doc, batch = items || [item];
+    if (!Array.isArray(batch) || !batch.length || batch.length > doc.pages.length+1) throw new Error('标记数据无效。');
+    const ids = new Set(doc.annotations.map(x => x.id));
+    for (const mark of batch) {
+      if (!mark || typeof mark.id !== 'string' || !['highlight','underline','ink','note'].includes(mark.kind) || !['en','zh'].includes(mark.origin) || !Number.isInteger(mark.page) || mark.page<0 || mark.page>=doc.pages.length || ids.has(mark.id)) throw new Error('标记数据无效或 ID 重复。');
+      ids.add(mark.id);
+      if (mark.wholePage && !['highlight','underline'].includes(mark.kind)) throw new Error('只能跨页选择文字。');
+      if (mark.origin === 'zh' && !current.translations[mark.page]?.path) throw new Error('跨页选择包含尚未翻译的中文页，请先翻译这些页面。');
+    }
+    const completeEnglish = batch.filter(mark => mark.wholePage && mark.origin === 'en');
+    if (completeEnglish.length) {
+      const selections = await python('selection_geometry', { path: current.path, page_indexes: completeEnglish.map(mark => mark.page) });
+      for (let i=0;i<completeEnglish.length;i++) completeEnglish[i].en = { rects: selections[i].rects };
+    }
+    for (const mark of batch) if (mark.wholePage && mark.origin === 'zh') {
+      const selection = await python('selection_geometry', { path: current.translations[mark.page].path, page_indexes: [0] });
+      mark.zh = { rects: selection[0].rects };
+    }
+    if (doc !== current || savePromise) throw new Error('文档已切换或正在保存，请重试。');
+    const prepared = batch.filter(mark => mark[mark.origin]?.rects?.length);
+    for (const mark of prepared) {
+      const rects = mark[mark.origin].rects;
+      if (rects.length>20000 || rects.some(r => !Array.isArray(r) || r.length!==4 || r.some(v => !Number.isFinite(v)) || r[2]<=r[0] || r[3]<=r[1])) throw new Error('标记范围无效。');
+      delete mark.wholePage;
+    }
+    if (!prepared.length) return;
+    remember(); doc.annotations.push(...prepared); changed();
+    for (const mark of prepared) scheduleMap(mark.id);
   },
   editAnnotation: ({ id, content, remove }) => { if (!doc || savePromise) return; const item = doc.annotations.find(x => x.id === id); if (!item) return; remember(); if (remove) doc.annotations = doc.annotations.filter(x => x.id !== id); else item.content = String(content).slice(0, 100000); changed(); },
   correctAnnotation: ({ id, side, page, geometry }) => {
@@ -273,12 +306,47 @@ app.whenReady().then(() => {
     } catch { return new Response('File unavailable', { status: 404 }); }
   });
   win = new BrowserWindow({ width: 1480, height: 960, minWidth: 1000, minHeight: 650, backgroundColor: '#f4f3ef', title: 'PDFSandwich', icon: path.join(root, 'dist', 'icon.png'), autoHideMenuBar: true, webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false } });
+  const updateConfig = readJson(path.join(userDir(), 'updates.json'), {});
+  const updateLibrary = app.isPackaged && process.platform === 'win32' ? require('electron-updater') : null;
+  updates = new UpdateController({
+    updater: updateLibrary?.autoUpdater, version: app.getVersion(), autoCheck: updateConfig.autoCheck !== false,
+    createToken: () => new updateLibrary.CancellationToken(),
+    onChange: value => { if (!win.isDestroyed()) win.webContents.send('pdfsandwich:update', value); },
+    savePreference: autoCheck => jsonWrite(path.join(userDir(), 'updates.json'), { autoCheck }),
+    beforeInstall: async () => {
+      if (!await mayLeave()) return false;
+      if (savePromise) await savePromise;
+      await stopTranslation();
+      await Promise.allSettled([...mappingTasks]);
+      const waitUntil = Date.now() + 30000;
+      while (pending.size) {
+        if (Date.now() > waitUntil) throw new Error('文档仍在处理，请稍后重试。');
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      persist();
+      if (doc) jsonWrite(path.join(userDir(), 'resume-update.json'), { path: doc.path });
+      const closingWorker = worker;
+      if (closingWorker && closingWorker.exitCode === null) await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('PDF 后端仍在关闭，请重试。')), 10000);
+        closingWorker.once('exit', () => { clearTimeout(timeout); resolve(); });
+        closingWorker.kill();
+      });
+      stopping = true;
+      return true;
+    },
+    installFailed: () => { stopping = false; }
+  });
+  updates.start();
+  app.once('will-quit', () => updates.dispose());
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', event => event.preventDefault());
-  ipcMain.handle('pdfsandwich:call', async (event, action, args) => { if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame || !Object.hasOwn(actions, action)) throw new Error('未知操作。'); return actions[action](args || {}); });
+  ipcMain.handle('pdfsandwich:call', async (event, action, args) => { if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame || !Object.hasOwn(actions, action)) throw new Error('未知操作。'); if (updates.snapshot().status === 'installing' && !['updateState', 'state'].includes(action)) throw new Error('正在准备安装更新，请稍候。'); return actions[action](args || {}); });
   if (process.env.PDFSANDWICH_DEV_URL === 'http://127.0.0.1:5173') win.loadURL(process.env.PDFSANDWICH_DEV_URL); else win.loadFile(path.join(root, 'dist', 'index.html'));
-  win.on('close', event => { if (stopping) return; event.preventDefault(); mayLeave().then(async yes => { if (yes) { stopping = true; await stopTranslation(); worker?.kill(); win.destroy(); app.quit(); } }).catch(error => dialog.showErrorBox('保存失败', redact(error.message))); });
-  const argument = process.argv.find(x => /\.pdf$/i.test(x) && fs.existsSync(x));
+  win.on('close', event => { if (stopping) return; event.preventDefault(); if (updates.snapshot().status === 'installing') return; mayLeave().then(async yes => { if (yes) { stopping = true; await stopTranslation(); worker?.kill(); win.destroy(); app.quit(); } }).catch(error => dialog.showErrorBox('保存失败', redact(error.message))); });
+  const resumeFile = path.join(userDir(), 'resume-update.json');
+  const resume = readJson(resumeFile, null);
+  if (fs.existsSync(resumeFile)) fs.unlinkSync(resumeFile);
+  const argument = process.argv.find(x => /\.pdf$/i.test(x) && fs.existsSync(x)) || (typeof resume?.path === 'string' && fs.existsSync(resume.path) ? resume.path : null);
   if (argument) win.webContents.once('did-finish-load', () => openDocument(argument).catch(error => dialog.showErrorBox('打开失败', error.message)));
 });
 app.on('window-all-closed', () => app.quit());

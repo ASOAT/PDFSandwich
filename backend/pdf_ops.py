@@ -111,7 +111,8 @@ def add_annotation(page, item, side):
         return
     color = item.get("color", "#edb83b").lstrip("#")
     rgb = tuple(int(color[i:i+2], 16) / 255 for i in (0, 2, 4))
-    rects = [fitz.Rect(r) for r in geo.get("rects", []) if fitz.Rect(r).get_area() > 0]
+    from annotation_alignment import merge_rects
+    rects = [fitz.Rect(r) for r in merge_rects(geo.get("rects", []))]
     kind = item["kind"]
     if kind in ("highlight", "underline"):
         if not rects:
@@ -193,6 +194,18 @@ def texts(path, index):
 
 def union(rects):
     return fitz.Rect(min(r[0] for r in rects), min(r[1] for r in rects), max(r[2] for r in rects), max(r[3] for r in rects))
+
+
+def selection_geometry(path, page_indexes):
+    from annotation_alignment import glyphs, boxes
+    with require_pdf(path) as document:
+        result = []
+        for index in page_indexes:
+            if not isinstance(index,int) or index<0 or index>=len(document):
+                raise ValueError('选择的页码无效。')
+            _,chars = glyphs(document[index])
+            result.append({'page':index,'rects':boxes(chars)})
+        return result
 
 
 def map_annotation(source_path, target_path, item, quote=None):

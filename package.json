@@ -1,6 +1,6 @@
 {
   "name": "pdfsandwich",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Windows bilingual PDF reader with synchronized annotations",
   "author": "PDFSandwich contributors",
@@ -17,9 +17,10 @@
     "build:backend": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-backend.ps1",
     "build:licenses": ".venv\\Scripts\\python.exe scripts/collect-licenses.py",
     "package": "npm run build && electron-builder --win dir",
-    "dist": "npm run build && electron-builder --win nsis"
+    "dist": "npm run build && electron-builder --win nsis --publish never"
   },
   "dependencies": {
+    "electron-updater": "6.8.9",
     "lucide-react": "^0.577.0",
     "pdfjs-dist": "6.3.289",
     "react": "^19.2.0",
@@ -67,8 +68,18 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true
-    }
+      "createDesktopShortcut": true,
+      "differentialPackage": true
+    },
+    "artifactName": "PDFSandwich-Setup-${version}.${ext}",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "ASOAT",
+        "repo": "PDFSandwich",
+        "releaseType": "release"
+      }
+    ]
   },
   "homepage": "https://asoat.github.io/PDFSandwich/",
   "repository": {

@@ -14,7 +14,7 @@ def main():
         try:
             request = json.loads(line)
             operation = request["op"]
-            if operation not in {"inspect", "save_original", "extract_page", "map_annotation", "texts", "export_pdf", "search"}:
+            if operation not in {"inspect", "save_original", "extract_page", "map_annotation", "selection_geometry", "texts", "export_pdf", "search"}:
                 raise ValueError("Unknown operation")
             value = getattr(pdf_ops, operation)(**request.get("args", {}))
             response = {"id": request["id"], "result": value}
