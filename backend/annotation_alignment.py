@@ -85,54 +85,151 @@ def literal_spans(text):
         yield cursor, len(text)
 
 
-def target_hits(page_text, page_chars, text, start, end, reference):
-    selected = []
-    # A selected paragraph can contain formulas not present as literal text in
-    # the translation record. Resolve its text runs independently around them.
+def record_instances(page_text, text):
+    """Locate a record as an ordered chain, including its math gaps.
+
+    A fragment such as "and" belongs to this record only when the surrounding
+    literal runs also match in order. Keep the shortest chain ending at each
+    occurrence; a repeated first word must not consume the previous paragraph.
+    Dynamic programming bounds work even for many repeated short fragments.
+    """
+    parts = []
     for a,b in literal_spans(text):
-        a,b = max(a,start), min(b,end)
-        if a >= b:
-            continue
-        hits = contextual_hits(page_text,page_chars,text,a,b)
-        if hits:
-            def score(hit):
-                chars, context = hit
-                box = fitz.Rect(chars[0]['bbox'])
-                return (-context, abs(box.y0-reference.y0)+abs(box.x0-reference.x0)*.2)
-            selected.extend(min(hits,key=score)[0])
-    return selected
+        value, indices = indexed(text[a:b])
+        if value:
+            parts.append((a,b,value,indices))
+    if not parts:
+        return []
+    if '{v' in text and max(len(p[2]) for p in parts) < 4:
+        return []
+    paths = []
+    for number,(a,b,value,indices) in enumerate(parts):
+        following = []
+        for offset in occurrences(page_text,value):
+            segment = (a,b,offset,offset+len(value),indices)
+            if number == 0:
+                following.append([segment])
+                continue
+            candidates = [path for path in paths if 0 <= offset-path[-1][3] <= 256]
+            if candidates:
+                best = max(candidates,key=lambda path:path[0][2])
+                following.append(best+[segment])
+        paths = following
+        if not paths:
+            break
+    # A final punctuation run has many later occurrences. A chain starting at
+    # the same anchor ends at its first valid completion, not at every period.
+    shortest = {}
+    for path in paths:
+        start = path[0][2]
+        if start not in shortest or path[-1][3] < shortest[start][-1][3]:
+            shortest[start] = path
+    return list(shortest.values())
 
 
-def map_long_selection(source_text, source_chars, target_text, target_chars, selection, records, origin):
-    """Intersect a selection with every translation record, not just one quote."""
-    from alignment import sentence_spans
+def instance_box(instance, chars):
+    return union_chars(chars[instance[0][2]:instance[-1][3]])
+
+
+def union_chars(chars):
+    result = fitz.Rect(chars[0]['bbox'])
+    for char in chars[1:]:
+        result |= fitz.Rect(char['bbox'])
+    return result
+
+
+def mapped_literal(instance, chars, start, end):
+    result = []
+    for a,b,left,right,indices in instance:
+        result.extend(chars[left+i] for i,p in enumerate(indices) if start <= a+p < end)
+    return result
+
+
+def formula_gaps(instance, text):
+    result = {}
+    for left,right in zip(instance,instance[1:]):
+        keys = tuple(re.findall(r'\{\s*v\s*(\d+)\s*\}', text[left[1]:right[0]]))
+        if keys and right[2]>left[3]:
+            result[keys] = (left[3],right[2])
+    return result
+
+
+def identity_hits(source_text, source_chars, target_text, target_chars, selection):
+    """Map preserved math glyphs within an already identified formula region."""
+    matcher = SequenceMatcher(None,source_text,target_text,autojunk=False)
+    if matcher.ratio() < .75:
+        return []
+    return [target_chars[b+i] for a,b,size in matcher.get_matching_blocks() for i in range(size)
+            if coverage([source_chars[a+i]],selection)>=.5]
+
+
+def outside_instances(length, instances):
+    intervals = sorted((item[0][2],item[-1][3]) for item in instances)
+    result, cursor = [],0
+    for a,b in intervals:
+        if a>cursor:
+            result.append((cursor,a))
+        cursor=max(cursor,b)
+    if cursor<length:
+        result.append((cursor,length))
+    return result
+
+
+def map_scoped_selection(source_text, source_chars, target_text, target_chars, selection, records, origin):
     src,dst = ('source','target') if origin=='en' else ('target','source')
-    mapped = []
+    mapped, source_instances, target_instances = [],[],[]
     for record in records:
-        for begin,end in literal_spans(record[src]):
-            parts = [(begin,end)]
-            # Usually the complete run is present. Sentence-sized recovery also
-            # tolerates PDF extraction moving styled fragments between runs.
-            if not locate(source_text,source_chars,record[src][begin:end]):
-                parts = [(begin+a,begin+b) for a,b in sentence_spans(record[src][begin:end],origin=='en')]
-            for a,b in parts:
-                normalized,indices = indexed(record[src][a:b])
-                for offset in occurrences(source_text,normalized):
-                    chars = source_chars[offset:offset+len(normalized)]
-                    positions = [i for i,char in enumerate(chars) if coverage([char],selection)>=.5]
-                    if not positions:
-                        continue
-                    runs = []
-                    for i in positions:
-                        if runs and i == runs[-1][-1]+1:
-                            runs[-1].append(i)
-                        else:
-                            runs.append([i])
-                    for run in runs:
-                        start,stop = a+indices[run[0]],a+indices[run[-1]]+1
-                        reference = fitz.Rect(chars[run[0]]['bbox'])
-                        for left,right in aligned_ranges(record,start,stop,origin):
-                            mapped.extend(target_hits(target_text,target_chars,record[dst],left,right,reference))
+        sources = record_instances(source_text,record[src])
+        targets = record_instances(target_text,record[dst])
+        source_instances.extend(sources);target_instances.extend(targets)
+        if not sources or not targets:
+            continue
+        for source in sources:
+            reference = instance_box(source,source_chars)
+            if not any(reference.intersects(rect) for rect in selection):
+                continue
+            # Matching the whole record establishes paragraph ownership first.
+            # Geometry only disambiguates repeated copies of that same record.
+            def distance(target):
+                box = instance_box(target,target_chars)
+                return abs(box.x0-reference.x0)+abs(box.y0-reference.y0)
+            target = min(targets,key=distance)
+            for a,b,left,right,indices in source:
+                positions = [i for i,char in enumerate(source_chars[left:right]) if coverage([char],selection)>=.5]
+                runs = []
+                for i in positions:
+                    if runs and i==runs[-1][-1]+1:
+                        runs[-1].append(i)
+                    else:
+                        runs.append([i])
+                for run in runs:
+                    start,stop = a+indices[run[0]],a+indices[run[-1]]+1
+                    for x,y in aligned_ranges(record,start,stop,origin):
+                        mapped.extend(mapped_literal(target,target_chars,x,y))
+            target_gaps = formula_gaps(target,record[dst])
+            for key,(a,b) in formula_gaps(source,record[src]).items():
+                if key in target_gaps:
+                    c,d = target_gaps[key]
+                    mapped.extend(identity_hits(source_text[a:b],source_chars[a:b],target_text[c:d],target_chars[c:d],selection))
+    # Display equations and labels have no translation record. Search only the
+    # remaining preserved content, never Chinese prose or another record's math.
+    target_gaps = outside_instances(len(target_text),target_instances)
+    for a,b in outside_instances(len(source_text),source_instances):
+        chars = source_chars[a:b]
+        if not any(coverage([char],selection)>=.5 for char in chars):
+            continue
+        reference = union_chars(chars)
+        candidates = []
+        for c,d in target_gaps:
+            for offset in occurrences(target_text[c:d],source_text[a:b]):
+                hit = target_chars[c+offset:c+offset+b-a]
+                box = union_chars(hit)
+                distance = abs(box.x0-reference.x0)+abs(box.y0-reference.y0)
+                if distance <= max(80,reference.height*.75):
+                    candidates.append((distance,hit))
+        if candidates:
+            hit = min(candidates,key=lambda pair:pair[0])[1]
+            mapped.extend(hit[i] for i,char in enumerate(chars) if coverage([char],selection)>=.5)
     return boxes(mapped)
 
 
@@ -206,10 +303,15 @@ def map_records(page, counterpart, item, records):
     if not selected:
         return None
     target_text, target_chars = glyphs(counterpart)
-    if len(selected) >= 40 or (len(selection)>1 and len(selected)>=10) or not item.get('selectedText'):
-        mapped = map_long_selection(source_text,source_chars,target_text,target_chars,selection,records,origin)
-        if mapped:
-            return {'geometry':{'rects':mapped},'accuracy':'phrase'}
+    long_selection = len(selected)>=40 or (len(selection)>1 and len(selected)>=10) or not item.get('selectedText')
+    # A stale/invalid short quote must not silently become a different selection.
+    if not long_selection and selected not in source_text:
+        return None
+    mapped = map_scoped_selection(source_text,source_chars,target_text,target_chars,selection,records,origin)
+    if mapped:
+        return {'geometry':{'rects':mapped},'accuracy':'phrase'}
+    if long_selection:
+        return None
     candidates = []
     for record in records:
         normalized, indices = indexed(record[src])
@@ -219,7 +321,7 @@ def map_records(page, counterpart, item, records):
             if not source_hits:
                 continue
             overlap, context = max((coverage(hit,selection),score) for hit,score in source_hits)
-            if overlap < .45:
+            if overlap < .45 or context < .6:
                 continue
             ranges = aligned_ranges(record,a,b,origin)
             mapped = []

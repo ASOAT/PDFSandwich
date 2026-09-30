@@ -13,10 +13,11 @@ const { ElectronHttpExecutor } = require('electron-updater/out/electronHttpExecu
 const { CURRENT_APP_INSTALLER_FILE_NAME } = require('builder-util-runtime');
 const root = path.resolve(__dirname, '..');
 const version = require('../package.json').version;
-const previous = process.env.PDFSANDWICH_PREVIOUS_VERSION || '0.3.0';
+const previous = process.env.PDFSANDWICH_PREVIOUS_VERSION || '0.4.0';
 const directory = path.join(root, 'release', version);
 const currentName = `PDFSandwich-Setup-${version}.exe`;
-const oldName = `PDFSandwich Setup ${previous}.exe`;
+const oldName = fs.existsSync(path.join(root, 'release', previous, `PDFSandwich-Setup-${previous}.exe`))
+  ? `PDFSandwich-Setup-${previous}.exe` : `PDFSandwich Setup ${previous}.exe`;
 const manifest = yaml.load(fs.readFileSync(path.join(directory, 'latest.yml'), 'utf8'));
 const expected = manifest.files[0].sha512;
 const current = awaitableFile(path.join(directory, currentName));

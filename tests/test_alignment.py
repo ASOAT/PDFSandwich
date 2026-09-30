@@ -150,3 +150,56 @@ def test_merge_rectangles_removes_overlap_without_joining_adjacent_lines_or_gaps
     assert result[0]==[0,0,50,12.2]
     assert any(r[0]==65 for r in result)
     assert any(r[1]==14 for r in result)
+
+
+def test_record_chain_does_not_consume_later_periods_or_repeated_first_word():
+    from annotation_alignment import record_instances
+    text = compact('Take x and y. Take a and b. Later text.')
+    paths = record_instances(text, 'Take {v1} and {v2}.')
+    assert [(p[0][2], p[-1][3]) for p in paths] == [(0, 10), (10, 20)]
+    assert compact('甲\x03乙') == '甲乙'
+
+
+def test_two_column_math_and_short_connectors_stay_with_their_paragraph():
+    from annotation_alignment import glyphs, boxes, coverage
+    # All data here is synthetic. Repeated "and let"/"and" and a standalone
+    # final period reproduce the two independent sources of cross-block marks.
+    rows = [
+        (45, 55, 'The preceding paragraph cites {v1}.', '上一段引用{v1}。', {'{v1}': '(1)'}),
+        (45, 140, 'The solver minimizes a smooth objective {v1} under a constraint:',
+         '求解器在约束下最小化光滑目标{v1}：', {'{v1}': 'f(x)'}),
+        (320, 55, 'Choose a target value {v1} and let {v2} converge to {v3}.',
+         '选择目标值{v1}，并让{v2}收敛到{v3}。', {'{v1}': 'a=0', '{v2}': 'x', '{v3}': 'a'}),
+        (320, 330, 'Another theorem assumes {v1} and let {v2} and {v3} remain fixed.',
+         '另一定理假设{v1}并且让{v2}和{v3}保持不变。', {'{v1}': 'b=1', '{v2}': 'y', '{v3}': 'b'}),
+    ]
+    with fitz.open() as src,fitz.open() as dst:
+        s=src.new_page(width=620);t=dst.new_page(width=620)
+        records=[]
+        for x,y,en,zh,formulas in rows:
+            records.append({'source':en,'target':zh,'terms':[]})
+            for marker,value in formulas.items():
+                en=en.replace(marker,value);zh=zh.replace(marker,value)
+            assert s.insert_textbox(fitz.Rect(x,y,x+240,y+100),en,fontsize=11)>=0
+            assert t.insert_textbox(fitz.Rect(x,y,x+240,y+100),zh,fontname='china-s',fontsize=11)>=0
+        # Display equations have no translation record at all.
+        for p in (s,t):
+            p.insert_text((60,225),'x + y = 0, (2a)',fontsize=11)
+            p.insert_text((60,245),'a + b = 1, (2b)',fontsize=11)
+        for origin,page,other in [('en',s,t),('zh',t,s)]:
+            _,chars=glyphs(page);_,opposite=glyphs(other)
+            for region in (fitz.Rect(40,130,300,260),fitz.Rect(310,45,570,130)):
+                chosen=[c for c in chars if region.contains(fitz.Rect(c['bbox']))]
+                expected=[c for c in opposite if region.contains(fitz.Rect(c['bbox']))]
+                item={'origin':origin,origin:{'rects':boxes(chosen)}}
+                result=map_records(page,other,item,records)
+                rects=[fitz.Rect(r) for r in result['geometry']['rects']]
+                assert rects and all(region.contains(r) for r in rects)
+                assert coverage(expected,rects)>.99
+                assert all((a&b).get_area()<.05 for i,a in enumerate(rects) for b in rects[i+1:])
+            # A single mathematical symbol maps via its preserved equation,
+            # rather than to another occurrence of x in translated prose.
+            selected=page.search_for('x + y')[0]
+            item={'origin':origin,'selectedText':'x + y',origin:{'rects':[list(selected)]}}
+            result=map_records(page,other,item,records)
+            assert result and all(210<r[1]<230 for r in result['geometry']['rects'])

@@ -61,7 +61,7 @@ def sentence_pairs(source, target):
 def compact(text):
     # PDF extraction can insert spaces, soft hyphens, and line-wrap hyphens.
     return ''.join(c for c in unicodedata.normalize('NFKC', text).casefold()
-                   if not c.isspace() and c not in '-\u00ad')
+                   if not c.isspace() and c not in '-\u00ad' and unicodedata.category(c) != 'Cc')
 
 
 def utf8_boundaries(text):

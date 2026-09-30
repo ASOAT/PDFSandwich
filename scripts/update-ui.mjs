@@ -3,15 +3,16 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 const root = process.cwd();
+const version = JSON.parse(await fs.readFile(path.join(root,'package.json'),'utf8')).version;
 const profile = await fs.mkdtemp(path.join(root, 'local-data', 'update-ui-'));
 await fs.writeFile(path.join(profile, 'updates.json'), JSON.stringify({ autoCheck: false }));
-const app = await electron.launch({ executablePath: path.join(root, 'release/0.4.0/win-unpacked/PDFSandwich.exe'), env: { ...process.env, PDFSANDWICH_DATA_DIR: profile }, timeout: 60000 });
+const app = await electron.launch({ executablePath: path.join(root, `release/${version}/win-unpacked/PDFSandwich.exe`), env: { ...process.env, PDFSANDWICH_DATA_DIR: profile }, timeout: 60000 });
 try {
   const page = await app.firstWindow(); page.setDefaultTimeout(20000);
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.getByRole('button', { name: '翻译与应用设置' }).click();
   await page.getByRole('region', { name: '软件更新' }).evaluate(el=>el.scrollIntoView({block:'center'}));
-  assert.match(await page.getByRole('region', { name: '软件更新' }).innerText(), /当前版本 0.4.0/);
+  assert.ok((await page.getByRole('region', { name: '软件更新' }).innerText()).includes(`当前版本 ${version}`));
   // Use the actual updater singleton; only replace its external network/installer.
   await app.evaluate(({ app }) => {
     const updater = process.mainModule.require(app.getAppPath() + '/node_modules/electron-updater').autoUpdater;
@@ -61,7 +62,7 @@ try {
   console.log(JSON.stringify({ packaged: true, progressUI: true, themes: 2, preferenceSaved: true, cancelInstallPreservesDocument: true, savedBeforeInstall: true, resumePrepared: true, errors }));
 } finally { await app.evaluate(({ app }) => app.exit(0)).catch(() => {}); }
 
-const resumed = await electron.launch({ executablePath: path.join(root, 'release/0.4.0/win-unpacked/PDFSandwich.exe'), env: { ...process.env, PDFSANDWICH_DATA_DIR: profile }, timeout: 60000 });
+const resumed = await electron.launch({ executablePath: path.join(root, `release/${version}/win-unpacked/PDFSandwich.exe`), env: { ...process.env, PDFSANDWICH_DATA_DIR: profile }, timeout: 60000 });
 try {
   const page = await resumed.firstWindow();
   await page.locator('.header-document').getByText('update-sample.pdf',{exact:true}).waitFor({timeout:30000});

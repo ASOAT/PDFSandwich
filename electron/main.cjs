@@ -110,7 +110,7 @@ async function openDocument(file) {
   priorityPage = doc.currentPage;
   recent = [{ path: file, name: doc.name, pages: doc.pages.length, openedAt: Date.now() }, ...recent.filter(x => x.path !== file)].slice(0, 12);
   jsonWrite(path.join(userDir(), 'recent.json'), recent); persist(); emit();
-  for (const item of doc.annotations) if (item.accuracy !== 'manual' && (!item.en || !item.zh || item.mappingVersion !== 2 || ['pending', 'unmatched'].includes(item.accuracy))) scheduleMap(item.id);
+  for (const item of doc.annotations) if (item.accuracy !== 'manual' && (!item.en || !item.zh || item.mappingVersion !== 3 || ['pending', 'unmatched'].includes(item.accuracy))) scheduleMap(item.id);
   return state();
 }
 async function completion(messages, maxTokens = 1500) {
@@ -133,8 +133,8 @@ async function mapItem(id, anchor) {
   let mapping = await python('map_annotation', args);
   const stillExists = () => doc === current && current.annotations.includes(item) && item.accuracy !== 'manual' && current.translations[item.page] === translation;
   if (!stillExists()) return;
-  if (JSON.stringify(item[target]) !== JSON.stringify(mapping.geometry) || item.accuracy !== mapping.accuracy || item.mappingVersion !== 2) {
-    item[target] = mapping.geometry; item.accuracy = mapping.accuracy; item.mappingVersion = 2; changed();
+  if (JSON.stringify(item[target]) !== JSON.stringify(mapping.geometry) || item.accuracy !== mapping.accuracy || item.mappingVersion !== 3) {
+    item[target] = mapping.geometry; item.accuracy = mapping.accuracy; item.mappingVersion = 3; changed();
   }
   if (settings.provider === 'api' && mapping.accuracy === 'unmatched' && mapping.selectedText && apiKey) {
     try {
