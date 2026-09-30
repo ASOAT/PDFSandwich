@@ -12,7 +12,7 @@ _installed = False
 
 
 class LayoutTranslator:
-    name = 'pdfsandwich-v7'
+    name = 'pdfsandwich-v8'
     preserves_styles = True
     model = 'guarded-text'
     lang_in = 'en'

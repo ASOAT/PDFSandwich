@@ -44,21 +44,18 @@ def split_references(page):
     markers = []
     for y, chars in rows:
         chars.sort(key=lambda c: c.box.x)
-        text = get_char_unicode_string(chars)
-        match = re.match(r'^\s*\[(\d{1,4})\]', text)
-        if match:
-            end = next((i+1 for i, c in enumerate(chars) if c.char_unicode == ']'), 0)
-            if end:
-                markers.append((int(match[1]), y, chars[:end]))
-        # The second column can have a marker in the middle of the glyph row.
-        for i, char in enumerate(chars[1:], 1):
-            if char.char_unicode != '[' or char.box.x-chars[i-1].box.x2 < 18:
-                continue
-            tail = chars[i:]
-            match = re.match(r'^\[(\d{1,4})\]', get_char_unicode_string(tail))
-            if match:
-                end = next((j+1 for j, c in enumerate(tail) if c.char_unicode == ']'), 0)
-                markers.append((int(match[1]), y, tail[:end]))
+        # Both columns can share a baseline and their gutter may be narrower
+        # than a fixed 18pt threshold. Find compact labels first, then validate
+        # repeated aligned margins and increasing numbers below.
+        for i,char in enumerate(chars):
+            if char.char_unicode!='[':continue
+            label=[char]
+            for candidate in chars[i+1:i+6]:
+                if candidate.box.x-label[-1].box.x2>char.pdf_style.font_size*.7:break
+                label.append(candidate)
+                if candidate.char_unicode==']':break
+            match=re.fullmatch(r'\[(\d{1,4})\]',''.join(c.char_unicode or '' for c in label))
+            if match:markers.append((int(match[1]),y,label))
     columns = []
     for marker in markers:
         right = marker[2][-1].box.x2
@@ -76,7 +73,7 @@ def split_references(page):
     entries = []
     for column_index, column in enumerate(columns):
         left = min(c.box.x for _, _, cs in column for c in cs)-1
-        right = min(c.box.x for _, _, cs in columns[column_index+1] for c in cs)-12 if column_index+1 < len(columns) else page.cropbox.box.x2
+        right = min(c.box.x for _, _, cs in columns[column_index+1] for c in cs)-1 if column_index+1 < len(columns) else page.cropbox.box.x2
         column_entries = []
         for index, (_, baseline, label) in enumerate(column):
             size = label[0].pdf_style.font_size
@@ -111,6 +108,7 @@ def split_references(page):
             entry = PdfParagraph(box=union_box(body), pdf_style=copy.copy(body[0].pdf_style),
                                  pdf_paragraph_composition=lines, xobj_id=body[0].xobj_id,
                                  unicode=get_char_unicode_string(body), first_line_indent=False,
+                                 render_order=min((c.render_order for c in body if c.render_order is not None),default=None),
                                  layout_label='reference', debug_id=f'reference-{column_index}-{index}')
             column_entries.append(entry)
             consumed.update(id(c) for c in candidates)

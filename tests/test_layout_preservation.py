@@ -51,6 +51,79 @@ def test_roman_tex_body_font_is_not_globally_classified_as_math():
     assert math_fonts(page)==(set(),set())
 
 
+def test_brackets_keep_consecutive_math_letters_and_subscripts_together():
+    chars=line('Use (xt) and (ordinary x).').pdf_character
+    flags=[False]*len(chars)
+    for i,c in enumerate(chars):
+        if c.char_unicode in 'xt' and i<8:c.pdf_style.font_id='math'
+    result=expand_math(chars,flags,{'math'},set())
+    assert all(result[4:8])
+    assert not any(result[13:])
+
+
+def test_numbered_items_have_separate_bodies_and_frozen_labels():
+    from layout_atoms import split_numbered_lists
+    p=paragraph(line('1. A nominal solver uses a model.',y=300),
+                line('and computes a step.',x=55,y=285),
+                line('2. A sensitivity solver computes derivatives.',y=265))
+    p.render_order=100
+    for i,comp in enumerate(p.pdf_paragraph_composition):
+        for j,char in enumerate(comp.pdf_line.pdf_character):char.render_order=100+i*100+j
+    page=Page(pdf_paragraph=[p]);split_numbered_lists(page)
+    assert len(page.pdf_paragraph)==2
+    assert ''.join(c.char_unicode for c in page.pdf_character)=='1. 2. '
+    assert all(not p.unicode.startswith(('1.','2.')) and p.box.x==55 for p in page.pdf_paragraph)
+    assert page.pdf_paragraph[0].box.y>page.pdf_paragraph[1].box.y2
+    assert [p.render_order for p in page.pdf_paragraph]==[103,303]
+    prose=paragraph(line('1. A single sentence is insufficient evidence.'))
+    page=Page(pdf_paragraph=[prose]);split_numbered_lists(page)
+    assert page.pdf_paragraph==[prose] and not page.pdf_character
+
+
+def test_formula_atoms_rejoin_accents_scripts_fraction_rules_and_tall_brackets():
+    from babeldoc.format.pdf.document_il.il_version_1 import PdfFormula, PdfCurve
+    from babeldoc.format.pdf.document_il.utils.formular_helper import update_formula_data
+    from babeldoc.format.pdf.document_il.midend.typesetting import TypesettingUnit
+    from layout_atoms import join_formula_atoms
+    def char(text,x,y,w,h,size=10,font='math'):
+        box=Box(x,y,x+w,y+h)
+        return PdfCharacter(char_unicode=text,box=box,visual_bbox=VisualBbox(box=copy.copy(box)),
+                            pdf_style=PdfStyle(font_id=font,font_size=size),xobj_id=0)
+    def formula(chars,line_id):
+        f=PdfFormula(pdf_character=chars,line_id=line_id);update_formula_data(f)
+        return PdfParagraphComposition(pdf_formula=f)
+    import copy
+    # An accent appears before an intervening prose composition in extraction
+    # order, but it must move with the base on the next geometric line.
+    base=char('M',40,100,9,9);accent=char('~',41,111,7,1)
+    power=char('2',49,107,3,4,size=6)
+    untouched=char('y',40,80,6,9)
+    comps=[formula([accent],0),PdfParagraphComposition(pdf_line=line('text',x=10,y=100)),
+           formula([base],1),formula([power],2),formula([untouched],3)]
+    p=PdfParagraph(pdf_paragraph_composition=comps);page=Page(pdf_paragraph=[p])
+    join_formula_atoms(page)
+    atom=next(c.pdf_formula for c in comps if c.pdf_formula and base in c.pdf_formula.pdf_character)
+    assert set(map(id,atom.pdf_character))=={id(base),id(accent),id(power)}
+    assert comps[0].pdf_line and len([c for c in comps if c.pdf_formula])==2
+    # Numerator, denominator and parentheses remain one unit through scaling.
+    numerator=char('1',105,106,5,5,size=7);denominator=char('2',105,95,5,5,size=7)
+    opening=char('(',100,94,3,19);closing=char(')',112,94,3,19)
+    p=PdfParagraph(pdf_paragraph_composition=[formula([opening],0),formula([numerator],1),formula([denominator],2),formula([closing],3)])
+    bar=PdfCurve(box=Box(104,103,111,103.3))
+    page=Page(pdf_paragraph=[p],pdf_curve=[bar]);join_formula_atoms(page)
+    assert len(p.pdf_paragraph_composition)==1
+    atom=p.pdf_paragraph_composition[0].pdf_formula
+    assert all(c.formula_layout_id for c in atom.pdf_character)
+    atom.pdf_curve.append(bar)
+    # Upstream relocation must apply one affine transform to the entire atom.
+    atom.x_offset=0;atom.y_offset=0
+    moved=TypesettingUnit(formular=atom).relocate(200,300,.8).formular
+    for before,after in zip(atom.pdf_character,moved.pdf_character):
+        assert abs(after.box.x-(200+(before.box.x-atom.box.x)*.8))<1e-6
+        assert abs(after.box.y-(300+(before.box.y-atom.box.y)*.8))<1e-6
+    assert moved.pdf_curve and abs((moved.pdf_curve[0].box.x2-moved.pdf_curve[0].box.x)-7*.8)<1e-6
+
+
 def test_implicit_spaces_are_preserved_before_style_splitting():
     first=line('Gauthier',x=40).pdf_character
     second=line('Gidel',x=first[-1].box.x2+2).pdf_character
@@ -76,3 +149,23 @@ def test_bibliography_rejoins_split_words_and_preserves_number_margin():
     assert len({id(c) for c in retained})==len(retained)
     # Only leading whitespace after the frozen labels may be discarded.
     assert originals-{id(c) for c in retained} == spaces
+
+
+def test_bibliography_finds_both_columns_even_with_a_narrow_shared_baseline():
+    from layout_preservation import characters
+    lines=[]
+    for i in range(3):
+        left=line(f'[{i+1}] Author. A reference title.',x=40,y=300-i*45)
+        right=line(f'[{i+4}] Another author. Title.',x=left.box.x2+8,y=300-i*45)
+        # A detector can put the two columns in a single paragraph.
+        lines.extend([left,right])
+    page=Page(cropbox=Cropbox(box=Box(0,0,612,792)),pdf_paragraph=[paragraph(*lines)])
+    originals={id(c) for p in page.pdf_paragraph for c in characters(p) if c.char_unicode.strip()}
+    split_references(page)
+    refs=[p for p in page.pdf_paragraph if p.layout_label=='reference']
+    assert len(refs)==6
+    assert [p.unicode for p in refs]==['Author. A reference title.']*3+['Another author. Title.']*3
+    assert ''.join(c.char_unicode for c in page.pdf_character)=='[1][2][3][4][5][6]'
+    retained=[c for p in page.pdf_paragraph for c in characters(p)]+page.pdf_character
+    assert len({id(c) for c in retained})==len(retained)
+    assert originals<={id(c) for c in retained}

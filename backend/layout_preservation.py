@@ -65,10 +65,13 @@ def expand_math(chars, flags, hard_fonts, roman_fonts):
             stack.append((value, i))
         elif value in closing and stack and stack[-1][0] == closing[value]:
             _, start = stack.pop()
-            inside = ''.join(c.char_unicode or ' ' for c in chars[start+1:i])
             # Parenthesized prose, acronyms and citations with author names
             # remain prose; a balanced mathematical group is indivisible.
-            words = re.findall(r'[A-Za-z]{2,}', inside)
+            # Consecutive math letters (e.g. x followed by subscript t) are
+            # variables, not an English word that should leave its brackets out.
+            prose = ''.join((c.char_unicode or ' ') if not flags[j] else ' '
+                            for j,c in enumerate(chars[start+1:i],start+1))
+            words = re.findall(r'[A-Za-z]{2,}', prose)
             if any(flags[start+1:i]) and all(re.fullmatch(OPERATORS, w) for w in words):
                 flags[start:i+1] = [True] * (i-start+1)
     # Preserve intervening whitespace inside the same formula, but never join
@@ -157,6 +160,7 @@ def preserve_algorithms(page, hard_fonts, roman_fonts):
                 page.pdf_character.extend(run)
             else:
                 p = copy.copy(paragraph)
+                p.render_order = min((c.render_order for c in run if c.render_order is not None),default=None)
                 p.box = union_box(run)
                 # Retain the source baseline/line height for a short prose cell.
                 p.box.y = min(p.box.y, min(c.box.y for c in run)-2)
@@ -191,15 +195,23 @@ def install():
     from babeldoc.format.pdf.document_il.midend.styles_and_formulas import StylesAndFormulas
     original_page = StylesAndFormulas.process_page
     original_classify = StylesAndFormulas._classify_characters_in_composition
+    original_merge = StylesAndFormulas.merge_overlapping_formulas
 
     def process_page(self, page):
         self._sandwich_fonts = math_fonts(page)
         self._sandwich_formula_id = -10000
         from reference_layout import split_references
+        from layout_atoms import split_numbered_lists
         split_references(page)
+        split_numbered_lists(page)
         preserve_algorithms(page, *self._sandwich_fonts)
         protect_heading_number(page)
         return original_page(self, page)
+
+    def merge(self, page):
+        original_merge(self, page)
+        from layout_atoms import join_formula_atoms
+        join_formula_atoms(page)
 
     def classify(self, composition, formula_font_ids, first_is_bullet_so_far, line_index):
         tagged, bullet = original_classify(self, composition, formula_font_ids, first_is_bullet_so_far, line_index)
@@ -232,5 +244,6 @@ def install():
         return result, bullet
 
     StylesAndFormulas.process_page = process_page
+    StylesAndFormulas.merge_overlapping_formulas = merge
     StylesAndFormulas._classify_characters_in_composition = classify
     _installed = True

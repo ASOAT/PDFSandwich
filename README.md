@@ -2,13 +2,13 @@
 
 Windows 中英对照 PDF 阅读与批注工具。默认使用免费的本地 HY-MT 专用英译中模型，提供浅色和深色主题。
 
-[下载 v0.4.1](https://github.com/ASOAT/PDFSandwich/releases/tag/v0.4.1) · [产品介绍](https://asoat.github.io/PDFSandwich/) · [反馈问题](https://github.com/ASOAT/PDFSandwich/issues)
+[下载 v0.4.2](https://github.com/ASOAT/PDFSandwich/releases/tag/v0.4.2) · [产品介绍](https://asoat.github.io/PDFSandwich/) · [反馈问题](https://github.com/ASOAT/PDFSandwich/issues)
 
 ![PDFSandwich 中英对照阅读界面](docs/reader-light.png)
 
 ## 使用
 
-从 [GitHub Release](https://github.com/ASOAT/PDFSandwich/releases/latest) 下载 `PDFSandwich-Setup-0.4.1.exe`，适用于 Windows 10 / 11 x64。
+从 [GitHub Release](https://github.com/ASOAT/PDFSandwich/releases/latest) 下载 `PDFSandwich-Setup-0.4.2.exe`，适用于 Windows 10 / 11 x64。
 安装版不需要安装 Python、Node.js 或配置 API Key。当前安装包未签名，发布页附 SHA-256 校验文件、完整源码包和原创示例 PDF。
 
 1. 打开或拖入可选中文字的英文 PDF。
@@ -73,7 +73,7 @@ Gemini 免费额度预设需在 Google AI Studio 获取自己的密钥，受服�
 
 安装前可保存原 PDF、保留草稿或取消安装；保存失败会阻止安装。安装完成后恢复原文档，保留设置、批注草稿、译文与已下载模型。普通退出不会自动安装。自动检查只访问 GitHub 版本信息，不上传 PDF 内容；可在设置里关闭。
 
-**0.3.x 及更早版本没有更新入口，需要手动安装一次 0.4.1；以后从软件内更新。**
+**0.3.x 及更早版本没有更新入口，需要手动安装一次 0.4.2；以后从软件内更新。**
 
 维护者需在每个正式 Release 同时上传安装包、同名 `.exe.blockmap` 和 `latest.yml`，并保留旧版本的 blockmap。不要重新压缩或重命名构建产物；`latest.yml` 中的版本、文件名、SHA-512 和字节数由发布脚本核验。不要更改 appId、产品名或用户数据目录，否则会影响升级与缓存复用。
 
@@ -107,7 +107,7 @@ node scripts/release-ui.mjs
 .venv/Scripts/python.exe scripts/annotation-fixture.py
 node scripts/annotation-ui.mjs
 node scripts/update-ui.mjs
-# 先构建 0.4.1，并保留 release/0.4.0 的原安装包和 blockmap：
+# 先构建 0.4.2，并保留 release/0.4.0 的原安装包和 blockmap：
 node scripts/update-transfer-test.cjs
 # 设置 PDFSANDWICH_PRIORITY_PDF 为至少 26 页的测试 PDF 后：
 node scripts/priority-smoke.mjs
@@ -125,14 +125,14 @@ UI 测试只修改测试 PDF 的副本，测试数据与缓存不提交。发布
 .venv/Scripts/python.exe scripts/create-icon.py
 npm run build:backend
 npm run build:licenses
-npm run dist -- '--config.directories.output=release/0.4.1'
+npm run dist -- '--config.directories.output=release/0.4.2'
 .venv/Scripts/python.exe scripts/source-bundle.py
 ```
 
 后端通过 PyInstaller 打包，再由 Electron Builder 生成 NSIS 安装程序。
 构建会核验并应用 BabelDOC 0.6.2 的两处导入替换：用经等价测试的轻量运算完成字形聚类和灰度相似度检查，避免首次排版加载不需要的大型计算库。
 构建输出在 `release/`，不提交二进制文件、模型、密钥或文档缓存。
-Release 的 `PDFSandwich-0.4.1-source.zip` 同时提供项目构建脚本及所封装 AGPL 依赖的对应源代码；模型与 llama.cpp 运行时另行下载，不封装在安装包中。
+Release 的 `PDFSandwich-0.4.2-source.zip` 同时提供项目构建脚本及所封装 AGPL 依赖的对应源代码；模型与 llama.cpp 运行时另行下载，不封装在安装包中。
 
 ## 设计与验证
 

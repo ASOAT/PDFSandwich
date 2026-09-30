@@ -31,7 +31,7 @@ try {
     while(Date.now()<end){const s=await call('state');if(check(s))return s;await new Promise(resolve=>setTimeout(resolve,50));}
     throw new Error('Cached annotation remapping timed out');
   }
-  state=await until(s=>s.doc.annotations.every(mark=>mark.accuracy==='manual'||mark.mappingVersion===3));
+  state=await until(s=>s.doc.annotations.every(mark=>mark.accuracy==='manual'||mark.mappingVersion===4));
   assert.deepEqual(state.doc.annotations.find(mark=>mark.id===manual.id),manual);
   const mapped=state.doc.annotations.filter(mark=>mark.accuracy!=='manual');
   function check(mark,side) {
@@ -53,11 +53,11 @@ try {
     const reverse={...mark,id:`reverse-${mark.id}`,origin:'zh',selectedText:undefined,en:undefined,mappingVersion:undefined,accuracy:'pending'};
     await call('annotate',{item:reverse});
   }
-  state=await until(s=>s.doc.annotations.filter(mark=>mark.origin==='zh').length===mapped.length&&s.doc.annotations.every(mark=>mark.mappingVersion===3));
+  state=await until(s=>s.doc.annotations.filter(mark=>mark.origin==='zh').length===mapped.length&&s.doc.annotations.every(mark=>mark.mappingVersion===4));
   for(const mark of state.doc.annotations.filter(mark=>mark.origin==='zh'))check(mark,'en');
   await call('save');await call('open',{path:file});state=await call('state');
   assert.equal(state.doc.dirty,false);assert.equal(state.doc.annotations.length,mapped.length*2);
-  assert.ok(state.doc.annotations.every(mark=>mark.en&&mark.zh&&mark.mappingVersion===3));assert.deepEqual(errors,[]);
+  assert.ok(state.doc.annotations.every(mark=>mark.en&&mark.zh&&mark.mappingVersion===4));assert.deepEqual(errors,[]);
   const report={packaged:!!exe,cachedMarksRemapped:mapped.length,manualPreserved:true,noCrossParagraphMarks:true,mathIncluded:true,reverseMapping:true,saveReopen:true,errors};
   await fs.writeFile('test-results/alignment-cache-ui.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report));
 } finally {await app.evaluate(({app})=>app.exit(0)).catch(()=>{});}

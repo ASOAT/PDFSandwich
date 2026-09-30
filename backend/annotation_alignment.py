@@ -175,12 +175,33 @@ def outside_instances(length, instances):
     return result
 
 
-def map_scoped_selection(source_text, source_chars, target_text, target_chars, selection, records, origin):
-    src,dst = ('source','target') if origin=='en' else ('target','source')
-    mapped, source_instances, target_instances = [],[],[]
+def owned_record_instances(source_text, target_text, records, src, dst):
+    """A table cell's short text must not claim the same word inside prose.
+
+    Resolve both sides first. A complete paragraph owns its contained literal
+    matches, regardless of whether a table/header record with identical words
+    would be geometrically closer to another occurrence after reflow.
+    """
+    resolved = []
     for record in records:
         sources = record_instances(source_text,record[src])
         targets = record_instances(target_text,record[dst])
+        if sources and targets:
+            resolved.append((record,sources,targets))
+    bounds = [sorted({(p[0][2],p[-1][3]) for item in resolved for p in item[side]})
+              for side in (1,2)]
+    def owned(paths, intervals):
+        return [p for p in paths if not any(
+            a <= p[0][2] and p[-1][3] <= b and (a < p[0][2] or p[-1][3] < b)
+            for a,b in intervals)]
+    return [(record,owned(sources,bounds[0]),owned(targets,bounds[1]))
+            for record,sources,targets in resolved]
+
+
+def map_scoped_selection(source_text, source_chars, target_text, target_chars, selection, records, origin):
+    src,dst = ('source','target') if origin=='en' else ('target','source')
+    mapped, source_instances, target_instances = [],[],[]
+    for record,sources,targets in owned_record_instances(source_text,target_text,records,src,dst):
         source_instances.extend(sources);target_instances.extend(targets)
         if not sources or not targets:
             continue

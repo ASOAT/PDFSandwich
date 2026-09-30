@@ -89,6 +89,22 @@ def test_style_markup_is_never_sent_to_model_and_alignment_contains_visible_text
     finally:engine.close()
 
 
+def test_styled_noun_keeps_its_article_and_rejects_extra_placeholder_braces(tmp_path):
+    engine=engine_at(tmp_path);calls=[]
+    def generate(source):
+        calls.append(source)
+        if source=='A nominal solver':return '名义求解器'
+        return source.replace(' works.', '进行计算。')
+    engine.generate=generate
+    try:
+        output=engine.translate("A <style id='1'>nominal solver</style> works.")
+        assert output=="<style id='1'>名义求解器</style>进行计算。"
+        assert calls[0]=='A nominal solver' and calls[1]=='{v1} works.'
+        assert translation_problem('A {v1} works.', '一个{{v1}}进行计算。')
+        assert translation_problem('The set {{v1}}.', '集合{{v1}}。') is None
+    finally:engine.close()
+
+
 def test_reference_translates_title_but_preserves_authors_venue_and_date(tmp_path):
     engine=engine_at(tmp_path);calls=[]
     engine.generate=lambda source:(calls.append(source) or '贝叶斯优化教程')

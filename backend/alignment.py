@@ -179,11 +179,16 @@ def phrase_ranges(record, start, end, origin):
     if selection == compact(text):
         return [(0, len(target))]
     # Names, acronyms and other identity text are often intentionally retained.
-    # Match their unique literal occurrence before consulting attention weights.
+    # Within a resolved paragraph, match the selected occurrence before using
+    # attention. A repeated name must not expand to every identical mention.
     if len(selection) >= 3:
-        matches = list(re.finditer(re.escape(text[start:end]), target, re.I))
-        if len(matches) == 1:
-            return [matches[0].span()]
+        literal=text[start:end].strip()
+        offset=start+len(text[start:end])-len(text[start:end].lstrip())
+        sources=list(re.finditer(re.escape(literal),text,re.I))
+        targets=list(re.finditer(re.escape(literal),target,re.I))
+        if sources and len(sources)==len(targets):
+            position=next((i for i,m in enumerate(sources) if m.start()==offset),None)
+            if position is not None:return [targets[position].span()]
     for english, chinese in sorted(record.get('terms', []), key=lambda pair: -len(pair[0])):
         a, b = (english, chinese) if origin == 'en' else (chinese, english)
         if compact(a) == selection:

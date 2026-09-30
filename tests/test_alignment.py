@@ -203,3 +203,41 @@ def test_two_column_math_and_short_connectors_stay_with_their_paragraph():
             item={'origin':origin,'selectedText':'x + y',origin:{'rects':[list(selected)]}}
             result=map_records(page,other,item,records)
             assert result and all(210<r[1]<230 for r in result['geometry']['rects'])
+
+
+def test_table_names_do_not_claim_repeated_occurrences_inside_a_paragraph():
+    from annotation_alignment import glyphs, boxes, coverage
+    with fitz.open() as src,fitz.open() as dst:
+        s=src.new_page();t=dst.new_page()
+        english=['The results are provided by engine.core.',
+                 'Another engine.core run gives different results.']
+        chinese=['结果由engine.core提供。', '另一次engine.core运行得到不同结果。']
+        # Reflow moves the first target name left. Its second occurrence is
+        # closer to the original name's coordinates, but is not its counterpart.
+        for page in (s,t):page.insert_text((60,65),'engine.core',fontsize=12)
+        for i,(en,zh) in enumerate(zip(english,chinese)):
+            s.insert_text((60,160+i*30),en,fontsize=12)
+            t.insert_text((60+i*125,160+i*30),zh,fontname='china-s',fontsize=12)
+        records=[{'source':' '.join(english),'target':''.join(chinese),'terms':[]},
+                 {'source':'engine.core','target':'engine.core','terms':[]},
+                 {'source':'engine.core','target':'engine.core','terms':[]}]
+        for origin,page,other in [('en',s,t),('zh',t,s)]:
+            _,chars=glyphs(page);_,opposite=glyphs(other)
+            for y in (65,160,190):
+                chosen=[c for c in chars if abs(c['origin'][1]-y)<1]
+                expected=[c for c in opposite if abs(c['origin'][1]-y)<1]
+                item={'origin':origin,origin:{'rects':boxes(chosen)}}
+                result=map_records(page,other,item,records)
+                assert result
+                rects=[fitz.Rect(r) for r in result['geometry']['rects']]
+                assert coverage(expected,rects)>.99
+                assert all(y-16<r.y0<y+1 for r in rects)
+            # Single-name selections also follow their occurrence in the owned
+            # paragraph, even when there are no attention links to consult.
+            hits=page.search_for('engine.core')
+            assert len(hits)==3
+            for hit in hits:
+                item={'origin':origin,'selectedText':'engine.core',origin:{'rects':[list(hit)]}}
+                result=map_records(page,other,item,records)
+                assert result and len(result['geometry']['rects'])==1
+                assert abs(result['geometry']['rects'][0][1]-hit.y0)<5

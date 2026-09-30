@@ -99,16 +99,18 @@ class TextEngine:
         while translating its surrounding sentence. Align the final visible
         text, not internal tags or the temporary style tokens.
         """
-        pattern = re.compile(r"(<style id='\d+'>)(.*?)</style>", re.S)
+        pattern = re.compile(r"(?:(\b(?:A|An|The|a|an|the)\s+))?(<style id='\d+'>)(.*?)</style>", re.S)
         next_id = max([int(x) for x in re.findall(r'\{\s*v\s*(\d+)\s*\}', source)] or [0]) + 1
         replacements = {}
         def protect(match):
             nonlocal next_id
-            value, _ = self.translate_cached(match[2])
-            if match[2].rstrip().endswith('.') and not value.rstrip().endswith(('.', '。', '！', '？')):
+            # Keep an article with the phrase it qualifies. A standalone "A"
+            # beside an opaque style token otherwise gets treated as a label.
+            value, _ = self.translate_cached((match[1] or '')+match[3])
+            if match[3].rstrip().endswith('.') and not value.rstrip().endswith(('.', '。', '！', '？')):
                 value = value.rstrip()+'。'
             marker = next_id; next_id += 1
-            replacements[marker] = match[1] + value + '</style>'
+            replacements[marker] = match[2] + value + '</style>'
             return '{v' + str(marker) + '}'
         protected = pattern.sub(protect, source)
         output, _ = self.translate_cached(protected)
@@ -134,8 +136,10 @@ class TextEngine:
         key=hashlib.sha256((self.identity+source).encode()).hexdigest()
         row=self.memory.execute('SELECT value FROM translations WHERE key=?',(key,)).fetchone()
         if row and not self.force:
-            saved=json.loads(row[0]);self.hits+=1
-            return saved['text'],saved['records'] or [self.alignment(source,saved['text'])]
+            saved=json.loads(row[0])
+            if not translation_problem(source,saved['text']):
+                self.hits+=1
+                return saved['text'],saved['records'] or [self.alignment(source,saved['text'])]
         warnings=len(self.warnings)
         previous=len(self.local.records) if self.local is not None else 0
         units=translation_units(source)

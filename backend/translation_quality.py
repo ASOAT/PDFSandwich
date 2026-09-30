@@ -73,6 +73,10 @@ def translation_problem(source, target):
         if counts and max(counts.values())*4>len(clean)*.35: return '译文出现大量重复'
     placeholders=lambda text: Counter(re.sub(r'\s+', '', token) for token in re.findall(r'\{\s*v\s*\d+\s*\}',text))
     if placeholders(source)!=placeholders(target): return '公式占位符不完整'
+    if placeholders(source):
+        strip_tokens=lambda text: re.sub(r'\{\s*v\s*\d+\s*\}', '', text)
+        if any(strip_tokens(target).count(c)>strip_tokens(source).count(c) for c in '{}'):
+            return '公式占位符外出现多余括号'
     if len(re.findall(r'[A-Za-z]{2,}',source))>=8 and not re.search(r'[\u3400-\u9fff]',target): return '正文仍为英文'
     return None
 
