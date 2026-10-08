@@ -2,6 +2,17 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { TranslationWorker } = require('../electron/translation-worker.cjs');
 const responder = `require('node:readline').createInterface({input:process.stdin}).on('line',line=>{const job=JSON.parse(line);if(job.hang)return;console.log(JSON.stringify({id:job.id,type:'progress',progress:50}));console.log(JSON.stringify({id:job.id,type:job.fail?'error':'finish',error:'failed',pid:process.pid}));});`;
+
+test('idle model process is released and next page restarts automatically',async()=>{
+  const worker=new TranslationWorker(()=>({exe:process.execPath,args:['-e',responder]}),undefined,{idleMs:80});
+  try{
+    const first=await worker.run({},process.cwd(),()=>{});
+    assert.equal((await worker.run({},process.cwd(),()=>{})).pid,first.pid);
+    await new Promise(resolve=>setTimeout(resolve,200));await worker.stopping;
+    assert.equal(worker.child,null);
+    assert.notEqual((await worker.run({},process.cwd(),()=>{})).pid,first.pid);
+  }finally{await worker.stop();}
+});
 test('translation worker reuses a process and recovers after page errors and cancellation',async()=>{
   const worker=new TranslationWorker(()=>({exe:process.execPath,args:['-e',responder]}));
   try {

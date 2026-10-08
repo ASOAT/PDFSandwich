@@ -7,6 +7,7 @@ import { syntaxTree,syntaxHighlighting,defaultHighlightStyle } from '@codemirror
 import { GFM } from '@lezer/markdown';
 import katex from 'katex';
 import { api,errorText } from './research-types';
+import { pastedImage,savePastedImage } from './image-paste';
 
 class PreviewWidget extends WidgetType {
   constructor(readonly kind:string,readonly value:string,readonly from:number,readonly noteId:string,readonly label=''){super();}
@@ -84,17 +85,22 @@ export function LiveMarkdown({value,noteId,onChange,onSave,onOpen,onError,focusT
   const host=useRef<HTMLDivElement>(null),view=useRef<EditorView|null>(null),callbacks=useRef({onChange,onSave,onOpen,onError});callbacks.current={onChange,onSave,onOpen,onError};
   const external=useRef(false);
   useEffect(()=>{
+    const pastes=new Set<{from:number;to:number}>();
     const frontmatter=/^---\r?\n[\s\S]*?\r?\n---\r?\n/.exec(value);
     const editor=new EditorView({parent:host.current!,state:EditorState.create({doc:value,selection:{anchor:frontmatter?.[0].length||0},extensions:[
       markdown({extensions:[GFM]}),history(),keymap.of([{key:'Mod-s',run:()=>{callbacks.current.onSave();return true;}},...markdownKeymap,...historyKeymap,...defaultKeymap]),syntaxHighlighting(defaultHighlightStyle),EditorView.lineWrapping,placeholder('写下你的笔记…'),liveDecorations(noteId),
       EditorView.contentAttributes.of({'aria-label':'实时 Markdown 编辑器',spellcheck:'false'}),
-      EditorView.updateListener.of(update=>{if(update.docChanged&&!external.current)callbacks.current.onChange(update.state.doc.toString());}),
-      EditorView.domEventHandlers({keydown:event=>{if((event.ctrlKey||event.metaKey)&&['s','z','y','f'].includes(event.key.toLowerCase()))event.stopPropagation();return false;}}),
+      EditorView.updateListener.of(update=>{if(update.docChanged){for(const range of pastes){range.from=update.changes.mapPos(range.from);range.to=update.changes.mapPos(range.to);}if(!external.current)callbacks.current.onChange(update.state.doc.toString());}}),
+      EditorView.domEventHandlers({keydown:event=>{if((event.ctrlKey||event.metaKey)&&['s','z','y','f'].includes(event.key.toLowerCase()))event.stopPropagation();return false;},paste:(event,view)=>{
+        const file=pastedImage(event.clipboardData);if(!file)return false;event.preventDefault();event.stopPropagation();
+        const {from,to}=view.state.selection.main,range={from,to};pastes.add(range);
+        void savePastedImage(file,noteId,view.state.doc.toString()).then(result=>{if(pastes.has(range)){const insert=result.markdown+'\n\n';view.dispatch({changes:{from:range.from,to:range.to,insert},selection:{anchor:range.from+insert.length},scrollIntoView:true});}}).catch(e=>callbacks.current.onError(errorText(e))).finally(()=>pastes.delete(range));return true;
+      }}),
     ]})});view.current=editor;
     const link=async(event:Event)=>{const name=(event as CustomEvent<string>).detail.replace(/^wiki:/,'');try{const note=await api<{id:string}|null>('notesWiki',{name,id:noteId});if(note)callbacks.current.onOpen(note.id);else callbacks.current.onError('未找到对应笔记。');}catch(e){callbacks.current.onError(errorText(e));}};
     const error=(event:Event)=>callbacks.current.onError((event as CustomEvent<string>).detail);
     host.current!.addEventListener('note-error',error);host.current!.addEventListener('note-link',link);
-    return()=>{host.current?.removeEventListener('note-error',error);host.current?.removeEventListener('note-link',link);view.current=null;editor.destroy();};
+    return()=>{pastes.clear();host.current?.removeEventListener('note-error',error);host.current?.removeEventListener('note-link',link);view.current=null;editor.destroy();};
   },[noteId]);
   useEffect(()=>{const editor=view.current;if(!editor)return;const old=editor.state.doc.toString();if(old===value)return;let from=0;while(from<old.length&&from<value.length&&old[from]===value[from])from++;let endOld=old.length,endNew=value.length;while(endOld>from&&endNew>from&&old[endOld-1]===value[endNew-1]){endOld--;endNew--;}external.current=true;editor.dispatch({changes:{from,to:endOld,insert:value.slice(from,endNew)}});external.current=false;},[value]);
   useEffect(()=>{if(!focusText||!view.current)return;const editor=view.current,index=editor.state.doc.toString().indexOf(focusText);if(index>=0)editor.dispatch({selection:{anchor:index},scrollIntoView:true});},[focusText,noteId]);

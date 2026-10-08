@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, protocol, safeStorage, shell, net, clipboard } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, protocol, safeStorage, shell, net, clipboard, ClipboardItem, nativeImage } = require('electron');
 const fs = require('node:fs');
 const fsp = fs.promises;
 const path = require('node:path');
@@ -414,7 +414,7 @@ app.whenReady().then(() => {
     } catch { return new Response('File unavailable', { status: 404 }); }
   });
   win = new BrowserWindow({ width: 1480, height: 960, minWidth: 1000, minHeight: 650, backgroundColor: '#f4f3ef', title: 'PDFSandwich', icon: path.join(root, 'dist', 'icon.png'), autoHideMenuBar: true, webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false } });
-  research=createResearch({app,BrowserWindow,dialog,shell,clipboard,root,userDir,library,getDoc:()=>doc,getWindow:()=>win,python,separatePython,openDocument,emit});
+  research=createResearch({app,BrowserWindow,dialog,shell,clipboard,ClipboardItem,nativeImage,root,userDir,library,getDoc:()=>doc,getWindow:()=>win,python,separatePython,openDocument,emit});
   Object.assign(actions,research.actions);
   app.once('will-quit',()=>research.dispose());
   if(app.isPackaged&&!process.env.PDFSANDWICH_DATA_DIR)app.setAsDefaultProtocolClient('pdfsandwich');

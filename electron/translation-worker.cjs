@@ -7,7 +7,12 @@ const { randomUUID } = require('node:crypto');
 const cancelledError = () => Object.assign(new Error('已让出后台任务，优先翻译当前页。'), { code: 'TRANSLATION_CANCELLED' });
 
 class TranslationWorker {
-  constructor(command, redact = text => text) { this.command = command; this.redact = redact; this.child = null; this.active = null; this.sequence = 0; }
+  constructor(command, redact = text => text, {idleMs=5*60*1000}={}) { this.command = command; this.redact = redact; this.child = null; this.active = null; this.sequence = 0; this.idleMs=idleMs; }
+  scheduleIdle() {
+    clearTimeout(this.idleTimer);
+    this.idleTimer=setTimeout(()=>{if(!this.active)void this.stop();},this.idleMs);
+    this.idleTimer.unref?.();
+  }
   start(cwd) {
     if (this.child) return;
     const command = this.command();
@@ -22,6 +27,7 @@ class TranslationWorker {
       if (event.type === 'progress') job.progress(event);
       else if (['finish', 'error', 'cancelled'].includes(event.type)) {
         this.active = null; this.cleanup(job);
+        this.scheduleIdle();
         if (event.type === 'cancelled' || job.cancelRequested) job.reject(cancelledError());
         else event.type === 'finish' ? job.resolve(event) : job.reject(new Error(this.redact(event.error || '翻译失败')));
       }
@@ -35,6 +41,7 @@ class TranslationWorker {
   }
   run(request, cwd, progress) {
     if (this.active) return Promise.reject(new Error('已有页面正在翻译。'));
+    clearTimeout(this.idleTimer);
     this.start(cwd);
     const child = this.child, id = ++this.sequence;
     const controlDir = path.join(cwd, 'translation-control');
@@ -59,6 +66,7 @@ class TranslationWorker {
     job.cancelTimer = setTimeout(() => this.stop(), 30000);
   }
   stop(reason = '翻译已暂停。') {
+    clearTimeout(this.idleTimer);
     if (this.active) { const job = this.active; this.active = null; this.cleanup(job); job.reject(job.cancelRequested ? cancelledError() : new Error(reason)); }
     const child = this.child; this.child = null;
     if (child?.pid) {

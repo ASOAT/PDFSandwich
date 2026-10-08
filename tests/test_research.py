@@ -20,6 +20,10 @@ def test_clips_rotate_correctly_and_select_glyphs(tmp_path):
     image=Image.open(io.BytesIO(base64.b64decode(result['png'])))
     assert image.width in (75,76)
     assert image.height in (437,438)
+    high=research_clip(str(path),0,rect=[25,50,200,80],image=True,formula=True)
+    formula=Image.open(io.BytesIO(base64.b64decode(high['png'])))
+    assert formula.width>image.width and formula.height>image.height
+    assert high['text']==result['text']
     output=tmp_path/'cover.png';research_cover(str(path),str(output))
     assert Image.open(output).width==360
 

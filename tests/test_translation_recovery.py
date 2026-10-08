@@ -115,3 +115,65 @@ def test_reference_translates_title_but_preserves_authors_venue_and_date(tmp_pat
         assert calls==['A Tutorial on Bayesian Optimization']
         assert engine.records[-1]['source']==source
     finally:engine.close()
+
+
+def test_multicolor_citations_keep_names_years_parentheses_and_sentence_boundary(tmp_path):
+    engine=engine_at(tmp_path);calls=[]
+    engine.generate=lambda text:(calls.append(text) or text.replace('We use ', '我们使用').replace(' Next sentence.', '下一句。'))
+    source="We use {v9} (<style id='1'>Peng & Mohseni</style>, <style id='2'>2016</style>; <style id='3'>Sharma et al.</style>, 2023). Next sentence."
+    try:
+        output=engine.translate(source)
+        assert "(<style id='1'>Peng & Mohseni</style>, <style id='2'>2016</style>; <style id='3'>Sharma et al.</style>, 2023)." in output
+        assert all('Mohseni' not in s and 'Sharma' not in s and '<style' not in s for s in calls)
+        assert '{v9}' in output and '下一句' in output
+        assert 'Peng & Mohseni' in engine.records[-1]['target'] and '<style' not in engine.records[-1]['target']
+    finally:engine.close()
+
+
+def test_citation_continued_from_previous_column_and_unmatched_brackets_are_preserved(tmp_path):
+    engine=engine_at(tmp_path)
+    engine.generate=lambda text:text.replace(' Note that ', ' 注意，').replace('the model works', '模型有效')
+    source="<style id='1'>et al.</style>, <style id='2'>2024</style>, Lemma 5.13). Note that the model works"
+    try:
+        output=engine.translate(source)
+        assert output.startswith("<style id='1'>et al.</style>, <style id='2'>2024</style>, Lemma 5.13). ")
+        assert '注意' in output
+        assert engine.translate('the model works (Smith').count('(')==1
+        assert engine.translate('the model works (Buchfink').endswith('(Buchfink')
+    finally:engine.close()
+
+
+def test_nested_parentheses_translate_content_but_do_not_drop_brackets_or_formulas(tmp_path):
+    engine=engine_at(tmp_path)
+    engine.generate=lambda text:text.replace('A model ', '模型').replace('stable map ', '稳定映射').replace(' works.', '有效。')
+    try:
+        output=engine.translate('A model (stable map [{v4}]) works.')
+        assert '(稳定映射[{v4}])' in output and output.count('(')==output.count(')')==1
+    finally:engine.close()
+
+
+def test_brackets_crossing_style_boundary_do_not_send_markup_to_model(tmp_path):
+    engine=engine_at(tmp_path);calls=[]
+    engine.generate=lambda text:(calls.append(text) or text.replace('method','方法').replace('detail','细节'))
+    try:
+        output=engine.translate("<style id='1'>method (detail</style> ends)")
+        assert output.count('(')==output.count(')')==1
+        assert "<style id='1'>" in output and '</style>' in output
+        assert all('<style' not in s and '</style>' not in s for s in calls)
+    finally:engine.close()
+
+
+def test_citation_punctuation_in_separate_color_runs_preserves_metadata(tmp_path):
+    from translation_structure import visible
+    engine=engine_at(tmp_path);calls=[]
+    engine.generate=lambda text:(calls.append(text) or text.replace('The method works.', '方法有效。'))
+    source="<style id='1'>(</style><style id='3'>Peng & Mohseni</style><style id='5'>, </style><style id='7'>2016</style><style id='9'>). The method works.</style>"
+    try:
+        output=engine.translate(source)
+        assert visible(output).startswith('(Peng & Mohseni, 2016).') and '方法有效' in output
+        assert all('Mohseni' not in text and '<style' not in text for text in calls)
+        assert output.count('<style ')==output.count('</style>')
+        source="<style id='1'>et al.</style><style id='3'>, 2024</style><style id='5'>, Lemma 5.13). The method works.</style>"
+        output=engine.translate(source)
+        assert visible(output).startswith('et al., 2024, Lemma 5.13).') and '方法有效' in output
+    finally:engine.close()

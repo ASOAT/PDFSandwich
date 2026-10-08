@@ -53,6 +53,35 @@ def expand_math(chars, flags, hard_fonts, roman_fonts):
         positions.extend([i] * len(char.char_unicode or ' '))
         if char.pdf_style.font_id in hard_fonts | roman_fonts:
             flags[i] = True
+    # Publishers often draw math letters with the prose font. Protect a short
+    # letter group attached to a known accent/script (NO_theta, D_f), or enclosed
+    # by recognized math. Otherwise it reaches translation as English "NO".
+    # Explicit whitespace and full words are hard boundaries.
+    i = 0
+    while i < len(chars):
+        if flags[i] or not (chars[i].char_unicode or '').isalpha():
+            i += 1
+            continue
+        end = i+1
+        while end < len(chars) and not flags[end] and (chars[end].char_unicode or '').isalpha():
+            end += 1
+        run = chars[i:end]
+        if sum(len(c.char_unicode) for c in run) <= 2:
+            attached = False
+            for neighbor, base in ((i-1, run[0]), (end, run[-1])):
+                if not 0 <= neighbor < len(chars) or not flags[neighbor]: continue
+                other = chars[neighbor]
+                if not (other.char_unicode or '').strip(): continue
+                a = other.visual_bbox.box if other.visual_bbox else other.box
+                b = base.visual_bbox.box if base.visual_bbox else base.box
+                size = base.pdf_style.font_size
+                gap = max(0, a.x-b.x2, b.x-a.x2)
+                script = other.pdf_style.font_size < size*.87 and abs(a.y-b.y)<size*.8
+                accent = a.y2-a.y<size*.4 and a.x<b.x2 and a.x2>b.x and 0<=a.y-b.y<size*1.3
+                enclosed = i>0 and end<len(chars) and flags[i-1] and flags[end]
+                if gap<size*.45 and (script or accent or enclosed): attached = True
+            if attached: flags[i:end] = [True]*(end-i)
+        i = end
     for match in re.finditer(r'\b(?:' + OPERATORS + r')\b', text):
         a, b = positions[match.start()], positions[match.end()-1]+1
         if any(flags[max(0, a-3):min(len(flags), b+3)]):
@@ -202,8 +231,10 @@ def install():
         self._sandwich_formula_id = -10000
         from reference_layout import split_references
         from layout_atoms import split_numbered_lists
-        from prose_layout import join_fragmented_prose
+        from prose_layout import join_fragmented_prose, join_fragmented_titles, preserve_author_rows
+        join_fragmented_titles(page)
         join_fragmented_prose(page)
+        preserve_author_rows(page)
         split_references(page)
         split_numbered_lists(page)
         preserve_algorithms(page, *self._sandwich_fonts)

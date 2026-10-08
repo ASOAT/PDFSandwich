@@ -3,9 +3,11 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { NotesStore, sourceLink, decodeLink, within } = require('./notes.cjs');
 const metadata = require('./metadata.cjs');
+const { FormulaRecognizer } = require('./formula.cjs');
 
-function createResearch({app, BrowserWindow, dialog, shell, clipboard, root, userDir, library, getDoc, getWindow, python, separatePython, openDocument, emit}) {
+function createResearch({app, BrowserWindow, dialog, shell, clipboard, ClipboardItem, nativeImage, root, userDir, library, getDoc, getWindow, python, separatePython, openDocument, emit}) {
   const windows = new Set(), assets = new Map(), clips = new Map();
+  const formulas = new FormulaRecognizer(async args=>{try{return await separatePython('formula_recognize',args);}finally{await fs.promises.unlink(args.image).catch(()=>{});}});
   const flushRequests=new Map();
   async function flushEditors(targets=[getWindow(),...windows]){
     const results=await Promise.all(targets.filter(window=>window&&!window.isDestroyed()).map(window=>new Promise(resolve=>{
@@ -103,7 +105,9 @@ function createResearch({app, BrowserWindow, dialog, shell, clipboard, root, use
     notesFlush:()=>true,
     notesFlushed:({token,ok})=>{flushRequests.get(token)?.(ok===true);return true;},
     researchLink:({link})=>navigate(link),
-    researchCopy:({text})=>{clipboard.writeText(String(text).slice(0,1_000_000));return true;},
+    researchCopy:async({text})=>{await clipboard.writeText(String(text).slice(0,1_000_000));return true;},
+    researchCopyImage:async({clipId})=>{const clip=clips.get(clipId);if(!clip)throw new Error('截图已过期。');await clipboard.write([new ClipboardItem({'image/png':new Blob([Buffer.from(clip.png,'base64')],{type:'image/png'})})]);clips.delete(clipId);return true;},
+    notesPasteImage:({id,png,content})=>{if(typeof png!=='string'||png.length>42_000_000)throw new Error('图片过大。');const image=nativeImage.createFromBuffer(Buffer.from(png,'base64'));if(image.isEmpty())throw new Error('无法读取剪贴板图片。');const size=image.getSize();if(size.width*size.height>32_000_000)throw new Error('图片尺寸过大，请缩小后粘贴。');return store().pasteImage(id,image.toPNG(),content);},
     researchExternal:({url})=>{const target=new URL(url);if(!['https:','http:'].includes(target.protocol))throw new Error('不支持此链接类型。');return shell.openExternal(target.href);},
     researchExcerpt:async({items})=>{if(!Array.isArray(items)||items.length>50)throw new Error('请每次摘录不超过 50 页。');const result=[];for(const item of items)result.push(await excerptText(item));return result;},
     notesExcerpt:async({excerpts,bilingual=true,thought='',noteId,clipId,latex})=>{
@@ -112,8 +116,8 @@ function createResearch({app, BrowserWindow, dialog, shell, clipboard, root, use
         result=store().appendExcerpt({...excerpt,document,noteId,bilingual,thought,attachment,latex});noteId=result.note.id;
       }return result;
     },
-    researchCapture:async({side,page,rect})=>{const file=selectedFile(side,page),document=currentDocument();const capture=await python('research_clip',{...file,rect,image:true});const id=crypto.randomUUID();clips.set(id,{...capture,documentId:document.id,page,side});if(clips.size>20)clips.delete(clips.keys().next().value);return {id,...capture,page,side};},
-    formulaRecognize:async({clipId})=>{const clip=clips.get(clipId);if(!clip)throw new Error('截图已过期。');const target=path.join(userDir(),'formula-captures',`${clipId}.png`);fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,Buffer.from(clip.png,'base64'));return separatePython('formula_recognize',{image:target,directory:path.join(userDir(),'models','formula')});},
+    researchCapture:async({side,page,rect,formula=false})=>{const file=selectedFile(side,page),document=currentDocument();const capture=await python('research_clip',{...file,rect,image:true,formula:!!formula});const id=crypto.randomUUID();clips.set(id,{...capture,documentId:document.id,page,side});if(clips.size>20)clips.delete(clips.keys().next().value);return {id,...capture,page,side};},
+    formulaRecognize:async({clipId,retry=false})=>{const clip=clips.get(clipId);if(!clip)throw new Error('截图已过期。');const target=path.join(userDir(),'formula-captures',`${clipId}.png`);fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,Buffer.from(clip.png,'base64'));return formulas.recognize(clipId,{image:target,directory:path.join(userDir(),'models','formula')},!!retry);},
     libraryCover:async({id})=>{const item=library.get(id),stat=fs.statSync(item.path),target=path.join(userDir(),'covers',`${id}-${stat.mtimeMs}.png`);if(!fs.existsSync(target))await python('research_cover',{path:item.path,output:target});return asset(target);},
     metadataIdentify:({id})=>python('research_identifiers',{path:library.get(id).path}),
     metadataLookup:({query})=>metadata.lookup(query),

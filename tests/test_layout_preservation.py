@@ -51,6 +51,58 @@ def test_roman_tex_body_font_is_not_globally_classified_as_math():
     assert math_fonts(page)==(set(),set())
 
 
+def test_title_cut_inside_word_rejoins_before_translation_without_merging_columns():
+    from prose_layout import join_fragmented_titles
+    left=paragraph(line('Learning Hamilt',x=40,y=700),label='fallback_line')
+    right=paragraph(line('onian Dynamics at Scale',x=115,y=700),label='title')
+    other=paragraph(line('A Different Column',x=350,y=700),label='fallback_line')
+    page=Page(pdf_paragraph=[left,right,other])
+    join_fragmented_titles(page)
+    assert len(page.pdf_paragraph)==2
+    assert page.pdf_paragraph[0].unicode=='Learning Hamiltonian Dynamics at Scale'
+    assert page.pdf_paragraph[0].layout_label=='title'
+    assert page.pdf_paragraph[1] is other
+    # A normal space between adjacent headings is not a broken word.
+    left=paragraph(line('Results',x=40,y=700),label='fallback_line')
+    right=paragraph(line('Discussion',x=80,y=700),label='title')
+    page=Page(pdf_paragraph=[left,right]);join_fragmented_titles(page)
+    assert len(page.pdf_paragraph)==2
+
+
+def test_author_names_and_raised_affiliations_preserve_original_glyphs_only_in_title_block():
+    from prose_layout import preserve_author_rows
+    title=paragraph(line('A Scientific Paper Title',y=720),label='title')
+    for c in title.pdf_paragraph_composition[0].pdf_line.pdf_character:c.pdf_style.font_size=14
+    authors=paragraph(line('Alice Smith1 Bob Jones2',y=670))
+    chars=authors.pdf_paragraph_composition[0].pdf_line.pdf_character
+    for c in chars:
+        if c.char_unicode.isdigit():
+            c.pdf_style.font_size=7;c.box.y+=4;c.box.y2+=1
+    abstract=paragraph(line('Abstract',y=630),label='title')
+    body=paragraph(line('We consider a model1 for learning.',y=650))
+    c=next(c for c in body.pdf_paragraph_composition[0].pdf_line.pdf_character if c.char_unicode=='1')
+    c.pdf_style.font_size=7;c.box.y+=4
+    page=Page(cropbox=Cropbox(box=Box(0,0,612,792)),pdf_paragraph=[title,authors,body,abstract])
+    preserve_author_rows(page)
+    assert page.pdf_character==chars and page.pdf_paragraph==[title,body,abstract]
+    page=Page(cropbox=Cropbox(box=Box(0,0,612,792)),pdf_paragraph=[title,authors])
+    preserve_author_rows(page)
+    assert len(page.pdf_paragraph)==2 and not page.pdf_character
+
+
+def test_prose_font_math_name_stays_with_its_hat_and_subscript():
+    chars=line('an NOθ acting').pdf_character
+    # A smaller theta is the only initially recognized piece of this formula.
+    chars[5].pdf_style.font_size=6
+    flags=[c.char_unicode=='θ' for c in chars]
+    result=expand_math(chars,flags,set(),set())
+    assert all(result[3:6]) and not any(result[:3]+result[6:])
+    # A full English word adjacent to a formula must still be translated.
+    chars=line('operatorθ').pdf_character;chars[-1].pdf_style.font_size=6
+    result=expand_math(chars,[False]*8+[True],set(),set())
+    assert result==[False]*8+[True]
+
+
 def test_brackets_keep_consecutive_math_letters_and_subscripts_together():
     chars=line('Use (xt) and (ordinary x).').pdf_character
     flags=[False]*len(chars)

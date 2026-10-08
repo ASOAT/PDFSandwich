@@ -298,5 +298,15 @@ class NotesStore {
     if(fs.existsSync(file)&&hash(fs.readFileSync(file))!==hash(bytes))throw new Error('同名截图已被外部修改，已保留原文件。');
     if (!fs.existsSync(file)) atomic(file, bytes); return path.relative(this.root,file);
   }
+  pasteImage(noteId,bytes,content) {
+    if(bytes.length>30*1024*1024||!bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])))throw new Error('无效图片或图片超过 30 MB。');
+    const note=this.get(noteId);
+    if(typeof content==='string'&&content.length<=5_000_000)note.content=content;
+    const directory=this.attachmentDirectory(note.relative);
+    const {naming,writeImage}=require('./image-naming.cjs');
+    const file=writeImage(directory,bytes,naming(this.config,note,parse(note.content).meta));
+    const relative=path.relative(path.dirname(this.resolve(note.relative)),file).replace(/\\/g,'/');
+    return {markdown:`![](<${relative}>)`,name:path.basename(file)};
+  }
 }
 module.exports = { NotesStore, sourceLink, decodeLink, mergeAppend, parse, within, atomic };

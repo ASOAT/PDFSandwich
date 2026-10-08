@@ -35,6 +35,16 @@ TERMS = {
     'cross product': '叉积', 'inner product': '内积', 'dot product': '点积',
     'lower (upper) scripts': '下标（上标）', 'Notations': '符号约定',
     'trajectory optimization': '轨迹优化', 'score function': '得分函数',
+    'neural operator': '神经算子', 'neural operators': '神经算子',
+    'empirical operator': '经验算子', 'empirical operators': '经验算子',
+    'discretization-agnostic': '与离散化无关', 'discretization-invariant': '离散化不变',
+    'parametrized map': '参数化映射', 'parameterized map': '参数化映射',
+    'Hamiltonian dynamics': '哈密顿动力学', 'Hamiltonian': '哈密顿',
+    'Hamiltonian MOR': '哈密顿模型降阶（MOR）', 'model order reduction': '模型降阶',
+    'symplectic manifold': '辛流形', 'symplectomorphism': '辛同胚',
+    'canonical FOM': '正则全阶模型（FOM）', 'canonical ROM': '正则降阶模型（ROM）',
+    'pullback': '拉回',
+    'differential-geometric': '微分几何',
     'Langevin': '朗之万', 'Monte Carlo': '蒙特卡洛',
 }
 
@@ -57,7 +67,8 @@ def glossary_entries(custom='', use_builtin=True):
     return terms
 
 def matching_terms(text, custom='', use_builtin=True):
-    normalized = normalize(text)
+    # A PDF line break may survive paragraph extraction as "discretization- agnostic".
+    normalized = re.sub(r'(?<=\w)-\s+(?=\w)', '-', normalize(text))
     return [(source,target) for source,target in glossary_entries(custom,use_builtin).items()
             if re.search(r'(?<!\w)'+re.escape(source)+r'(?!\w)',normalized,re.I)]
 

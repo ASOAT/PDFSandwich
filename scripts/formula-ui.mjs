@@ -17,7 +17,7 @@ try{
   await page.getByRole('button',{name:'框选公式转 LaTeX',exact:true}).click();
   const box=await page.locator('.pdf-surface[data-side="en"]').first().boundingBox();const s=(await call('state')).doc.pages[0],scale=box.width/s.width;
   await page.mouse.move(box.x+70*scale,box.y+110*scale);await page.mouse.down();await page.mouse.move(box.x+430*scale,box.y+220*scale,{steps:10});await page.mouse.up();
-  await page.getByRole('dialog',{name:'提取公式'}).waitFor();await page.getByRole('button',{name:'本地识别为 LaTeX',exact:true}).click();
+  await page.getByRole('dialog',{name:'提取公式'}).waitFor();assert.equal(await page.getByRole('button',{name:'本地识别为 LaTeX',exact:true}).count(),0);
   await page.waitForFunction(()=>document.querySelector('.latex-editor')?.value.length>10,{},{timeout:120000});
   const latex=await page.getByRole('textbox',{name:'LaTeX 公式代码'}).inputValue();assert.match(latex,/frac/);assert.match(latex,/x/);assert.match(latex,/y/);
   await page.locator('.formula-preview .katex').waitFor();await page.getByRole('button',{name:'复制 Markdown',exact:true}).click();

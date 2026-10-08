@@ -27,6 +27,7 @@ try{
   const config=await call('researchSettings');const noteFile=path.join(config.root,note.relative);await fs.appendFile(noteFile,'\nWritten in another editor.\n');
   await page.waitForFunction(()=>document.querySelector('.markdown-editor')?.value.includes('Written in another editor.'));
   await page.getByRole('button',{name:'双栏原文译文',exact:true}).click();
+  await page.waitForFunction(()=>[...document.querySelectorAll('[data-side="en"] .textLayer span')].some(e=>e.textContent.trim().length>10));
   await page.evaluate(()=>{const node=[...document.querySelectorAll('[data-side="en"] .textLayer span')].find(e=>e.textContent.trim().length>10);const range=document.createRange();range.selectNodeContents(node);const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);node.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:400,clientY:300}));});
   await page.getByRole('menuitem',{name:'加入文献笔记…',exact:true}).click();await page.getByRole('textbox',{name:'摘录个人想法'}).fill('Contextual observation');await page.getByRole('button',{name:'加入笔记',exact:true}).click();
   await page.getByRole('button',{name:'源码',exact:true}).click();await editor.waitFor();await page.waitForFunction(()=>document.querySelector('.markdown-editor')?.value.includes('Contextual observation'));

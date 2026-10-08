@@ -33,7 +33,7 @@ class TextEngine:
         self.memory.execute('CREATE TABLE IF NOT EXISTS translations (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
         identity={key:self.cfg.get(key) for key in ('provider','localEngine','glossary','useGlossary')}
         if self.local is None:identity.update(baseUrl=self.cfg['baseUrl'],model=self.cfg['model'])
-        self.identity=json.dumps(identity,sort_keys=True)+'quality-v8'
+        self.identity=json.dumps(identity,sort_keys=True)+'quality-v10'
         self.lock=threading.Lock()
 
     def translate(self,text):
@@ -45,13 +45,31 @@ class TextEngine:
             self.control.check()
             try:
                 if reference:output,records=self.translate_reference(source)
-                else:output,records=self.translate_styled(source) if "<style id=" in source else self.translate_cached(source)
+                else:output,records=self.translate_structured(source)
                 self.records.extend(records)
                 return output
             except PageCancelled:raise
             except Exception as error:
                 self.errors.append(str(error)[:200])
                 raise
+
+    def translate_structured(self, source):
+        """Own brackets and citation identity instead of asking a model to copy them."""
+        from translation_structure import protected_ranges, visible, styled_slice
+        ranges=list(protected_ranges(source))
+        if not ranges:
+            return self.translate_styled(source) if "<style id=" in source else self.translate_cached(source)
+        next_id=max([int(x) for x in re.findall(r'\{\s*v\s*(\d+)\s*\}',source)] or [0])+1
+        replacements={};parts=[];offset=0
+        for start,end,inner in ranges:
+            parts.append(styled_slice(source,offset,start))
+            value=styled_slice(source,start,end) if inner is None else styled_slice(source,start,start+1)+self.translate_structured(styled_slice(source,start+1,end-1))[0]+styled_slice(source,end-1,end)
+            replacements[next_id]=value;parts.append('{v'+str(next_id)+'}')
+            next_id+=1;offset=end
+        parts.append(styled_slice(source,offset,len(source)));protected=''.join(parts)
+        output,_=self.translate_styled(protected) if "<style id=" in protected else self.translate_cached(protected)
+        output=re.sub(r'\{\s*v\s*(\d+)\s*\}',lambda m:replacements.get(int(m[1]),m[0]),output)
+        return output,[self.alignment(visible(source),visible(output))]
 
     def translate_reference(self, source):
         """Translate the title, keeping bibliographic identity text verbatim."""
