@@ -5,13 +5,13 @@
 - `electron/library.cjs` 保留现有 PDF 索引和稳定文献 UUID；`library-migration.cjs` 仅迁移旧默认目录的名称及关联路径。
 - `electron/notes.cjs` 管理普通 Markdown 文件、YAML、笔记 ID、摘录 ID、附件、历史、冲突和目录配置，不依赖 React 或 Obsidian。
 - `electron/research.cjs` 负责受限 IPC、目录选择、弹出窗口、协议定位、笔记保存协调及与现有文献/翻译接口衔接。
-- `backend/research.py` 重用 PyMuPDF 和已有 annotation alignment 输出按需封面、选区文字、截图及双语段落。现有翻译、PDF 批注保存流程不依赖笔记模块。
+- `backend/research.py` 重用 PyMuPDF 和已有 annotation alignment 输出按需封面、选区文字、截图。现有翻译、PDF 批注保存流程不依赖笔记模块。
 - `src/NotesPanel.tsx` 管理文献关联、列表和保存状态；`LiveMarkdown.tsx` 用 CodeMirror 的装饰层呈现实时 Markdown，不把 HTML 重新转换成源文；`MarkdownView.tsx` 提供只读 Markdown/KaTeX 视图。
 - `obsidian-plugin/` 仅实现 Vault 设置和 URI 链接，直接共享 Markdown 文件，没有常驻本地服务器。独立模式无需安装 Obsidian。
 
 ## 标识与定位
 
-每份入库 PDF 沿用已有文献 UUID。每份应用新建笔记的 YAML 有 `pdfsandwich_note_id`，文献笔记还有 `pdfsandwich_document_id`。摘录对文献 ID、页码、原始几何或批注 ID、文字和附件生成指纹，防止重复加入。
+每份入库 PDF 沿用已有文献 UUID。笔记 UUID、文献 UUID 与相对路径保存在 `.pdfsandwich/notes-index.json`，Obsidian 模式索引位于 Vault 根目录，独立模式位于 Notes 根目录。新笔记默认零字节；所选模板决定 YAML 和正文。旧笔记的两个内部属性在打开时备份并迁入索引，其他属性与正文保留。摘录对文献 ID、页码、原始几何或批注 ID、文字和附件生成指纹，防止重复加入。
 
 来源链接使用 `pdfsandwich://document/<uuid>?page=<1-based>&annotation=<id>&rect=x0,y0,x1,y1`。已安装程序接收 URI 并按库内 UUID 打开文献；启动第二个实例会把链接交给已有窗口。链接不包含私人绝对 PDF 路径。笔记移动分类后文献关联不变。
 
@@ -35,9 +35,9 @@ Markdown 是文件事实来源。每次读取计算内容版本；保存比较�
 
 ## 边界
 
-笔记默认模板不推断研究方法或结论。常用 Markdown、YAML、KaTeX 和 wiki 链接可用；Obsidian 的 Dataview、插件脚本及复杂嵌入不会执行。段落重排视图以占位文字提示公式，精确公式布局保留在 PDF 中。本地公式识别是独立可选模型，结果可修订并与截图一起存储，不改变原始公式。
+模板仅在创建时读取，可在 Obsidian 插件中选择或清除，不执行 Templater 脚本。常用 Markdown、YAML、KaTeX 和 wiki 链接可用；Obsidian 的 Dataview、插件脚本及复杂嵌入不会执行。段落重排视图已移除，阅读采用 PDF 原版式。本地公式识别是独立可选模型，结果可修订并与截图一起存储，不改变原始公式。
 
-应用删除文库索引不会删除实际文件；如果移除后重新导入，可能分配新的文献 ID，应保留原库索引以维持旧笔记链接。外部非应用笔记没有稳定 YAML ID 时按路径索引。桌面 Obsidian 本体未纳入自动 UI 测试；插件 API 使用模拟宿主验证，Vault 文件共享由真实文件系统测试。
+应用删除文库索引不会删除实际文件；如果移除后重新导入，可能分配新的文献 ID，应保留原库索引以维持旧笔记链接。普通 Markdown 也通过独立索引分配稳定 ID；外部重命名优先匹配文件身份，唯一内容匹配仅用于原路径消失的非空文件。备份或迁移时请保留隐藏索引。桌面 Obsidian 本体未纳入自动 UI 测试；插件 API 使用模拟宿主验证，Vault 文件共享由真实文件系统测试。
 
 
 Obsidian 图片附件遵循 Vault 的 `.obsidian/app.json` 中 `attachmentFolderPath`，每次新增截图重新读取。支持 Vault 根目录、指定目录、笔记所在目录和其子目录。独立模式继续使用 Notes/assets。引用使用标准 Markdown 相对路径；复制迁移会检查并携带引用图片，目标 Obsidian Vault 的附件按其设置存放。参考 [Obsidian 附件位置说明](https://obsidian.md/help/attachments)。

@@ -169,3 +169,24 @@ def test_bibliography_finds_both_columns_even_with_a_narrow_shared_baseline():
     retained=[c for p in page.pdf_paragraph for c in characters(p)]+page.pdf_character
     assert len({id(c) for c in retained})==len(retained)
     assert originals<={id(c) for c in retained}
+
+
+def test_fragmented_prose_rejoins_broken_words_without_merging_columns_or_heading():
+    from prose_layout import join_fragmented_prose
+    from layout_preservation import characters
+    heading=paragraph(line('Neural operators',y=330),label='title')
+    a=paragraph(line('Neura',y=300));b=paragraph(line('l',x=65,y=300),label='title')
+    c=paragraph(line('operators provi',x=73,y=300));d=paragraph(line('d',x=148,y=300),label='title')
+    body=paragraph(line('e a useful mapping',x=153,y=300),line('from functions to functions.',x=40,y=285))
+    neighbor=paragraph(line('Other column.',x=400,y=300),line('Its continuation.',x=400,y=285))
+    formula=paragraph(line('x + y = 1',x=40,y=260),label='formula')
+    page=Page(pdf_paragraph=[heading,a,b,c,d,body,neighbor,formula])
+    before={id(c) for p in page.pdf_paragraph for c in characters(p)}
+    join_fragmented_prose(page)
+    assert len(page.pdf_paragraph)==4
+    assert page.pdf_paragraph[1].unicode=='Neural operators provide a useful mapping from functions to functions.'
+    assert page.pdf_paragraph[0] is heading and page.pdf_paragraph[2] is neighbor and page.pdf_paragraph[3] is formula
+    assert before.issubset({id(c) for p in page.pdf_paragraph for c in characters(p)})
+    # Similar single-line cells are insufficient evidence of a broken paragraph.
+    cells=[paragraph(line('data',x=40,y=100)),paragraph(line('table',x=60,y=100))]
+    p=Page(pdf_paragraph=cells);join_fragmented_prose(p);assert len(p.pdf_paragraph)==2

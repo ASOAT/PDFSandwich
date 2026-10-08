@@ -5,7 +5,7 @@ from pathlib import Path
 import pymupdf as fitz
 from PIL import Image
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'backend'))
-from research import research_clip,research_cover,research_identifiers,research_paragraphs
+from research import research_clip,research_cover,research_identifiers
 
 
 def test_clips_rotate_correctly_and_select_glyphs(tmp_path):
@@ -24,11 +24,9 @@ def test_clips_rotate_correctly_and_select_glyphs(tmp_path):
     assert Image.open(output).width==360
 
 
-def test_identifiers_and_untranslated_paragraphs(tmp_path):
+def test_identifiers(tmp_path):
     path=tmp_path/'paper.pdf'
     doc=fitz.open();page=doc.new_page();page.insert_text((40,50),'arXiv:1706.03762v7 DOI:10.1234/example')
     doc.set_metadata({'title':'A test paper title'});doc.save(path);doc.close()
     result=research_identifiers(str(path))
     assert result['arxiv']=='1706.03762v7';assert result['doi']=='10.1234/example'
-    rows=research_paragraphs(str(path),0)
-    assert rows[0]['target']=='';assert rows[0]['rects']

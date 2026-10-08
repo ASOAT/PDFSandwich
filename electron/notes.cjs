@@ -2,6 +2,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID, createHash } = require('node:crypto');
 const YAML = require('yaml');
+const {NoteIndex}=require('./note-index.cjs');
+const {templateContent}=require('./note-template.cjs');
 
 const hash = text => createHash('sha256').update(text).digest('hex');
 const slug = name => String(name || 'Untitled').replace(/[<>:"/\\|?*\x00-\x1f]/g, '-').replace(/[. ]+$/g, '').slice(0, 110) || 'Untitled';
@@ -18,7 +20,6 @@ function parse(content) {
   try { return { meta: YAML.parse(match[1], { maxAliasCount: 50 }) || {}, body: content.slice(match[0].length) }; }
   catch { return { meta: {}, body: content }; }
 }
-const frontmatter = meta => `---\n${YAML.stringify(meta).trimEnd()}\n---\n\n`;
 function mapImages(content, transform) {
   const literal=[...content.matchAll(/^```[^\n]*\n[\s\S]*?^```\s*$|^~~~[^\n]*\n[\s\S]*?^~~~\s*$|`+[^`\n]+`+/gm)].map(m=>[m.index,m.index+m[0].length]);
   return content.replace(/!\[([^\]\n]*)\]\((?:<([^>\n]+)>|([^\s)]+))\)|!\[\[([^\]\n]+)\]\]/g,(match,alt,angle,plain,wiki,offset)=>{
@@ -65,7 +66,7 @@ function mergeAppend(base, local, remote) {
 class NotesStore {
   constructor(configFile, defaultRoot, onChange = () => {}) {
     this.configFile = configFile; this.defaultRoot = path.resolve(defaultRoot); this.onChange = onChange;
-    this.config = { mode: 'standalone', standaloneRoot: this.defaultRoot, vault: '', notesFolder: 'Papers' };
+    this.config = { mode: 'standalone', standaloneRoot: this.defaultRoot, vault: '', notesFolder: 'Papers', templateFile: '' };
     if (fs.existsSync(configFile)) Object.assign(this.config, JSON.parse(fs.readFileSync(configFile, 'utf8')));
     this.watchers = []; this.timer = null; this.index = new Map(); this.connect();
   }
@@ -101,11 +102,13 @@ class NotesStore {
       if (fs.existsSync(shared)) {
         const value = JSON.parse(fs.readFileSync(shared, 'utf8'));
         if (typeof value.notesFolder === 'string') this.config.notesFolder = value.notesFolder;
+        this.config.templateFile = typeof value.templateFile === 'string' ? value.templateFile : '';
       }
       this.root = this.safeFolder(this.config.vault, this.config.notesFolder);
     } else this.root = path.resolve(this.config.standaloneRoot || this.defaultRoot);
     fs.mkdirSync(this.root, { recursive: true });
-    this.scan();
+    this.associations=new NoteIndex(this.config.mode==='obsidian'?this.config.vault:this.root);
+    this.index=new Map();this.scan();
     const changed = () => { clearTimeout(this.timer); this.timer = setTimeout(() => { try { this.scan(); this.onChange({ type: 'notes-changed' }); } catch (error) { this.onChange({ type: 'notes-error', error: error.message }); } }, 180); };
     this.watchers.push(fs.watch(this.root, { recursive: true }, changed));
     if (this.config.mode === 'obsidian') {
@@ -115,8 +118,8 @@ class NotesStore {
         clearTimeout(this.configTimer); this.configTimer = setTimeout(() => {
           try {
             const shared = JSON.parse(fs.readFileSync(path.join(sharedDir, 'config.json'), 'utf8'));
-            if (shared.notesFolder !== this.config.notesFolder) {
-              this.safeFolder(this.config.vault, shared.notesFolder); this.config.notesFolder = shared.notesFolder;
+            if (shared.notesFolder !== this.config.notesFolder || (shared.templateFile||'') !== this.config.templateFile) {
+              this.safeFolder(this.config.vault, shared.notesFolder); this.config.notesFolder = shared.notesFolder;this.config.templateFile=shared.templateFile||'';
               atomic(this.configFile, JSON.stringify(this.config, null, 2)); this.connect(); this.onChange({ type: 'notes-settings', settings: this.settings() });
             }
           } catch (error) { this.onChange({ type: 'notes-error', error: error.message }); }
@@ -146,6 +149,7 @@ class NotesStore {
   configure(changes, migrate = false) {
     const previous = { ...this.config }, oldRoot = this.root;
     const next = { ...this.config, ...changes };
+    const migrationNotes=migrate?this.list():[];
     if (!['standalone', 'obsidian'].includes(next.mode)) throw new Error('未知笔记模式。');
     if (next.mode === 'obsidian' && !fs.existsSync(next.vault)) throw new Error('请选择已存在的 Vault。');
     const nextRoot = next.mode === 'obsidian' ? this.safeFolder(next.vault, next.notesFolder) : path.resolve(next.standaloneRoot);
@@ -176,7 +180,14 @@ class NotesStore {
     }
     try {
       fs.mkdirSync(nextRoot, { recursive: true });
-      if (next.mode === 'obsidian') atomic(path.join(next.vault, '.pdfsandwich', 'config.json'), JSON.stringify({ version: 1, notesFolder: next.notesFolder }, null, 2));
+      if (next.mode === 'obsidian') {
+        const shared=path.join(next.vault,'.pdfsandwich','config.json');
+        const latest=fs.existsSync(shared)?JSON.parse(fs.readFileSync(shared,'utf8')):{};
+        const value={...latest,version:1,notesFolder:next.notesFolder};
+        if(Object.hasOwn(changes,'templateFile'))value.templateFile=changes.templateFile;
+        atomic(shared,JSON.stringify(value,null,2));
+      }
+      if(migrate&&nextRoot!==oldRoot){const index=new NoteIndex(next.mode==='obsidian'?next.vault:nextRoot);for(const note of migrationNotes)index.register(path.join(nextRoot,note.relative),note.id,note.documentId);}
       this.config = next; this.connect(); atomic(this.configFile, JSON.stringify(this.config, null, 2));
     } catch (error) { this.config = previous; this.connect(); throw error; }
     this.onChange({ type: 'notes-settings', settings: this.settings() }); return this.settings();
@@ -193,29 +204,41 @@ class NotesStore {
     }; if (fs.existsSync(root)) visit(root, 0); return files;
   }
   scan() {
-    const result = new Map();
+    const result = new Map();this.associations.reload();
     const cachedByPath=new Map([...this.index.values()].map(note=>[note.relative,note]));
     for (const relative of this.walk()) {
       const file = this.resolve(relative), stat = fs.statSync(file); if (stat.size > 5 * 1024 * 1024) continue;
       const cached=cachedByPath.get(relative);
       if(cached&&cached.modified===stat.mtimeMs&&cached.bytes===stat.size){result.set(cached.id,cached);continue;}
       const content = fs.readFileSync(file, 'utf8'), { meta, body } = parse(content);
-      const id = typeof meta.pdfsandwich_note_id === 'string' ? meta.pdfsandwich_note_id : `external-${hash(relative).slice(0, 24)}`;
+      const {id,documentId}=this.associations.identify(file,stat,content,meta);
       if (result.has(id)) continue;
-      result.set(id, { id, relative, title: String(meta.title || /^#\s+(.+)$/m.exec(body)?.[1] || path.basename(file, '.md')), documentId: String(meta.pdfsandwich_document_id || ''), category: path.dirname(relative) === '.' ? '' : path.dirname(relative), tags: Array.isArray(meta.tags) ? meta.tags.map(String) : [], modified: stat.mtimeMs, bytes:stat.size, content, version: hash(content) });
+      result.set(id, { id, relative, title: String(meta.title || /^#\s+(.+)$/m.exec(body)?.[1] || path.basename(file, '.md')), documentId: String(documentId), category: path.dirname(relative) === '.' ? '' : path.dirname(relative), tags: Array.isArray(meta.tags) ? meta.tags.map(String) : [], modified: stat.mtimeMs, bytes:stat.size, content, version: hash(content) });
     }
-    this.index = result;
+    this.associations.flush();this.index = result;
   }
   list(query = '') { this.scan(); const q = String(query).toLowerCase(); return [...this.index.values()].filter(n => !q || (n.title + '\n' + n.content).toLowerCase().includes(q)).sort((a,b) => b.modified - a.modified).map(({ content, ...n }) => n); }
-  get(id) { this.index.delete(id); this.scan(); const note = this.index.get(id); if (!note) throw new Error('笔记已移动或删除，请刷新列表。'); return { ...note }; }
+  get(id) {
+    this.index.delete(id);this.scan();let note=this.index.get(id);if(!note)throw new Error('笔记已移动或删除，请刷新列表。');
+    // Import legacy IDs into the sidecar before removing just these two properties.
+    const match=/^\uFEFF?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(note.content);
+    if(match){const yaml=YAML.parseDocument(match[1]);if(!yaml.errors.length&&(yaml.has('pdfsandwich_note_id')||yaml.has('pdfsandwich_document_id'))){
+      let header=match[1];const fields=yaml.contents.items.filter(pair=>['pdfsandwich_note_id','pdfsandwich_document_id'].includes(pair.key?.value));
+      for(const pair of fields.sort((a,b)=>b.key.range[0]-a.key.range[0])){const start=header.lastIndexOf('\n',pair.key.range[0]-1)+1,end=pair.value?.range?.[2]??header.indexOf('\n',pair.key.range[0])+1;header=header.slice(0,start)+header.slice(end>start?end:header.length);}
+      const body=note.content.slice(match[0].length),content=yaml.contents.items.length>fields.length?'---\n'+header.trimEnd()+'\n---\n'+body:body;
+      atomic(path.join(this.root,'.pdfsandwich','history',slug(id),`${Date.now()}-legacy-properties.md`),note.content);
+      atomic(this.resolve(note.relative),content);this.index.delete(id);this.scan();note=this.index.get(id);
+    }}return {...note};
+  }
   create({ title = 'Untitled', category = '', document } = {}) {
     this.scan();
     if (document) { const existing = [...this.index.values()].find(n => n.documentId === document.id); if (existing) return this.get(existing.id); }
-    const id = randomUUID(), metadata = { pdfsandwich_note_id: id, ...(document ? { pdfsandwich_document_id: document.id } : {}), title: document?.title || title, authors: document?.authors ? document.authors.split(/;\s*/) : [], year: document?.year || '', doi: document?.doi || '', tags: document?.tags || [] };
-    const base = this.resolve(path.join(category, slug(metadata.title)));
-    let file = base + '.md'; if (fs.existsSync(file)) file = base + ' - ' + id.slice(0, 8) + '.md';
-    const body = `# ${metadata.title}\n\n${document ? `[打开 PDF](${sourceLink(document.id)})\n\n` : ''}## 摘要\n\n${document?.abstract || ''}\n\n## 研究方法\n\n## 核心结论\n\n## 个人思考\n\n## 阅读摘录\n`;
-    fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, frontmatter(metadata) + body, { flag: 'wx' });
+    const id=randomUUID(),noteTitle=document?.title||title;
+    const content=templateContent(this.config,{...document,title:noteTitle},(root,relative)=>this.safeFolder(root,relative));
+    const base=this.resolve(path.join(category,slug(noteTitle)));
+    let file=base+'.md';if(fs.existsSync(file))file=base+' - '+id.slice(0,8)+'.md';
+    fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,content,{flag:'wx'});
+    this.associations.register(file,id,document?.id||'');
     this.onChange({ type: 'notes-changed', id }); return this.get(id);
   }
   save({ id, content, version, base }) {
@@ -229,10 +252,6 @@ class NotesStore {
       }
       content = merged;
     }
-    const before = parse(note.content).meta, after = parse(content).meta;
-    // Association IDs survive normal editing, including accidentally removing frontmatter.
-    if (before.pdfsandwich_note_id && after.pdfsandwich_note_id !== before.pdfsandwich_note_id) throw new Error('笔记唯一标识不能修改。请保留 Frontmatter 中的 pdfsandwich_note_id。');
-    if (before.pdfsandwich_document_id && after.pdfsandwich_document_id !== before.pdfsandwich_document_id) throw new Error('文献关联标识不能修改。');
     if (note.content !== content) {
       const backups = path.join(this.root, '.pdfsandwich', 'history', slug(id));
       atomic(path.join(backups, `${Date.now()}-${note.version.slice(0,12)}.md`), note.content);
@@ -254,6 +273,7 @@ class NotesStore {
     if(path.dirname(source)!==path.dirname(destination))content=rebaseLinks(content,path.dirname(source),path.dirname(destination));
     if(content!==note.content){const backup=path.join(this.root,'.pdfsandwich','history',slug(id),`${Date.now()}-rename.md`);atomic(backup,note.content);atomic(source,content);}
     fs.renameSync(source, destination);
+    this.associations.register(destination,note.id,note.documentId);
     this.onChange({ type: 'notes-changed' }); this.scan();
     return [...this.index.values()].find(n => n.relative === path.relative(this.root, destination));
   }

@@ -1,6 +1,5 @@
 """On-demand research views; all coordinates use unrotated PDF points."""
 import base64
-import json
 import re
 from pathlib import Path
 import pymupdf as fitz
@@ -51,24 +50,3 @@ def research_clip(path, page, rect=None, rects=None, image=False):
             pix = p.get_pixmap(matrix=fitz.Matrix(2.5,2.5), clip=region * p.rotation_matrix, alpha=False, annots=False)
             result['png'] = base64.b64encode(pix.tobytes('png')).decode('ascii')
         return result
-
-
-def research_paragraphs(path, page, translated=None):
-    from annotation_alignment import glyphs, owned_record_instances, boxes
-    with fitz.open(path) as document:
-        source = document[page]
-        if not translated or not Path(translated).is_file():
-            return [{'id': str(i), 'source': b[4].strip(), 'target': '', 'rects': [list(b[:4])]} for i,b in enumerate(source.get_text('blocks',sort=True)) if b[6]==0 and b[4].strip()]
-        alignment = Path(translated).parent / 'alignment.json'
-        records = json.loads(alignment.read_text(encoding='utf-8')) if alignment.exists() else []
-        with fitz.open(translated) as target_doc:
-            st, sc = glyphs(source); tt, tc = glyphs(target_doc[0]); rows = []
-            for i, (record, origins, targets) in enumerate(owned_record_instances(st,tt,records,'source','target')):
-                if not origins or not targets: continue
-                # Keep formula tokens explicit in reflow mode; the original PDF remains authoritative.
-                clean = lambda value: re.sub(r'\{(?:v|f|m)\d+\}', '〔公式〕', value)
-                rects = boxes(sc[origins[0][0][2]:origins[0][-1][3]])
-                target_rects = boxes(tc[targets[0][0][2]:targets[0][-1][3]])
-                rows.append({'id': str(i), 'source': clean(record['source']), 'target': clean(record['target']), 'rects': rects, 'targetRects': target_rects})
-            rows.sort(key=lambda row: (round(row['rects'][0][0]/100), row['rects'][0][1]) if row['rects'] else (0,0))
-            return rows

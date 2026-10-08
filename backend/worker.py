@@ -14,7 +14,7 @@ def main():
         try:
             request = json.loads(line)
             operation = request["op"]
-            if operation not in {"inspect", "catalog", "sync_translation", "save_original", "extract_page", "map_annotation", "selection_geometry", "texts", "export_pdf", "search", "research_cover", "research_clip", "research_identifiers", "research_paragraphs", "formula_recognize"}:
+            if operation not in {"inspect", "catalog", "sync_translation", "save_original", "extract_page", "map_annotation", "selection_geometry", "texts", "export_pdf", "search", "research_cover", "research_clip", "research_identifiers", "formula_recognize"}:
                 raise ValueError("Unknown operation")
             if operation.startswith('research_'):
                 import research

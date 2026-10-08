@@ -3,7 +3,7 @@ import copy
 import re
 
 
-def explicit_word_spaces(chars):
+def explicit_word_spaces(chars, visual=False):
     """PDF text often encodes word spaces only as a glyph-position gap.
 
     Upstream infers spaces from a paragraph-wide distance statistic; justified
@@ -15,7 +15,9 @@ def explicit_word_spaces(chars):
     for char in chars:
         if result:
             prev = result[-1]
-            gap = char.box.x-prev.box.x2
+            current_box=char.visual_bbox.box if visual and char.visual_bbox else char.box
+            previous_box=prev.visual_bbox.box if visual and prev.visual_bbox else prev.box
+            gap = current_box.x-previous_box.x2
             size = min(prev.pdf_style.font_size, char.pdf_style.font_size)
             if (gap > size*.16 and (prev.char_unicode or '').strip()
                     and (char.char_unicode or '').strip()):

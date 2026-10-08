@@ -15,3 +15,10 @@ License: AGPL-3.0-only, the same as PDFSandwich.
 
 
 图片位置沿用 Obsidian 自身的“设置 → 文件与链接 → 新附件的默认位置”。PDFSandwich 新增截图和公式图片时读取这一设置；文献笔记目录与附件目录可以分开。修改此设置只影响新附件，已有链接和文件保持原位。
+
+
+## Templates and note associations (0.6.2)
+
+In Obsidian → Settings → PDFSandwich → Template, select a Markdown file in this Vault. Clear the selection to create empty notes. Existing notes are never regenerated from a template. Supported variables: `{{title}}`, `{{authors}}`, `{{year}}`, `{{doi}}`, `{{abstract}}`, `{{url}}`, `{{date}}`, `{{time}}`; date/time formats support `YYYY`, `MM`, `DD`, `HH`, `mm`, `ss`. Templater scripts are not executed.
+
+Document and note IDs now live in the Vault's `.pdfsandwich/notes-index.json`. Keep this hidden folder when backing up or moving notes. The reader backs up old notes before removing only the two legacy ID properties. The plugin accepts both the old properties and the new index, and tracks note/folder renames.

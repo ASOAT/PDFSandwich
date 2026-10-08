@@ -24,7 +24,6 @@ try {
   await call('open',{path:file});await call('translate',{page:0});
   s=await until(s=>s.doc.translations[0]?.status==='ready');
   const seconds=s.doc.translations[0].seconds;
-  const paragraphs=await call('researchParagraphs',{page:0});assert.ok(paragraphs.some(p=>p.source&&/[\u4e00-\u9fff]/.test(p.target)));
   const record=await call('notesForDocument',{documentId:s.doc.libraryId});assert.ok(record.documentId);
   await page.waitForFunction(()=>document.querySelector('[data-side="zh"] .textLayer')?.textContent.includes('神经网络')&&!document.querySelector('.page-rendering'));
   async function select(side,needle,tool) {
@@ -69,7 +68,7 @@ try {
   const dark=await samplePixels();assert.ok(dark.every(p=>p[0]<35&&p[1]<35&&p[2]<35));
   assert.ok(await page.locator('.mark-layer [data-mark-id]').count()>=6);
   await page.screenshot({path:`${target}/reader-dark.png`});
-  const report={packaged:Boolean(exe),seconds,light,dark,paragraphPairs:true,bilingualExcerpt:true,bidirectionalMarks:true,noteTextShared:true,retranslateRestored:true,saveReopen:true,errors,translated:s.doc.translations[0].path};
+  const report={packaged:Boolean(exe),seconds,light,dark,bilingualExcerpt:true,bidirectionalMarks:true,noteTextShared:true,retranslateRestored:true,saveReopen:true,errors,translated:s.doc.translations[0].path};
   await fs.writeFile(`test-results/release-ui${exe?'-packaged':''}.json`,JSON.stringify(report,null,2));
   assert.deepEqual(errors,[]);console.log(JSON.stringify(report));
 } finally {

@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { NotesStore, sourceLink, decodeLink } = require('../electron/notes.cjs');
 function fixture(t) { const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pdfsandwich-notes-')); const store = new NotesStore(path.join(root,'config.json'), path.join(root,'Notes')); t.after(() => { store.dispose(); fs.rmSync(root,{recursive:true,force:true}); }); return { root, store }; }
+function seeded(store,options={}){const note=store.create(options);return store.save({id:note.id,version:note.version,base:note.content,content:'# '+note.title+'\n\n## 个人思考\n'}).note;}
 const doc = { id:'document-uuid', title:'Example study', authors:'Alice; Bob', year:'2026', pages:12, tags:['AI'] };
 test('one document one note, excerpts deduplicate and resolve exact source', t => {
   const {store}=fixture(t), note=store.create({document:doc});
@@ -17,7 +18,7 @@ test('one document one note, excerpts deduplicate and resolve exact source', t =
   assert.throws(()=>decodeLink('pdfsandwich://file/C:/secret'));
 });
 test('simultaneous handwritten edit and appended excerpt merge; overlap preserves recovery', t => {
-  const {store}=fixture(t), note=store.create({document:doc});
+  const {store}=fixture(t), note=seeded(store,{document:doc});
   store.appendExcerpt({document:doc,page:0,source:'External excerpt'});
   const edited=note.content.replace('## 个人思考','## 个人思考\n\nMy own idea');
   const result=store.save({id:note.id,base:note.content,version:note.version,content:edited});
@@ -51,7 +52,7 @@ test('Obsidian folder configuration propagates both ways without moving handwrit
 });
 
 test('categorized notes keep screenshot references through renaming and migration', t => {
-  const {store,root}=fixture(t),note=store.create({document:doc,category:'Research'});
+  const {store,root}=fixture(t),note=seeded(store,{document:doc,category:'Research'});
   const png=Buffer.from('89504e470d0a1a0a','hex');
   const attachment=store.attachment(doc.id,png);
   const saved=store.appendExcerpt({document:doc,page:1,attachment,source:'A diagram'}).note;
@@ -66,7 +67,7 @@ test('categorized notes keep screenshot references through renaming and migratio
 });
 
 test('save checks actual file content even when an external editor preserves size and timestamps', t=>{
-  const {store}=fixture(t),created=store.create({document:doc}),file=store.resolve(created.relative);
+  const {store}=fixture(t),created=seeded(store,{document:doc}),file=store.resolve(created.relative);
   fs.utimesSync(file,1,1);const note=store.get(created.id);
   const external=note.content.replace('Example study','Changed title');assert.equal(external.length,note.content.length);
   fs.writeFileSync(file,external);fs.utimesSync(file,1,1);
@@ -91,4 +92,33 @@ test('Obsidian captures follow native attachment settings and survive migration 
   assert.deepEqual(fs.readFileSync(store.attachmentPath(link,migrated.relative)),png);
   assert.equal(fs.existsSync(file),true);assert.equal(migrated.documentId,doc.id);
   assert.equal(fs.readFileSync(path.join(vault,'03Literature',note.relative),'utf8'),saved.content);
+});
+
+
+test('empty notes retain stable IDs without YAML through restart and external rename',t=>{
+  const {store,root}=fixture(t),note=store.create({document:doc});assert.equal(note.content,'');
+  const file=store.resolve(note.relative),renamed=store.resolve('External name.md');fs.renameSync(file,renamed);
+  assert.equal(store.get(note.id).documentId,doc.id);assert.equal(store.get(note.id).relative,'External name.md');
+  store.dispose();const restarted=new NotesStore(path.join(root,'config.json'),path.join(root,'Notes'));t.after(()=>restarted.dispose());
+  assert.equal(restarted.create({document:doc}).id,note.id);
+  const other=restarted.create({title:'Unrelated'});assert.notEqual(other.id,note.id);assert.equal(other.documentId,'');
+});
+
+test('legacy IDs move to shared index with backup; other YAML and prose stay intact',t=>{
+  const {store}=fixture(t),content='---\npdfsandwich_note_id: legacy-id\npdfsandwich_document_id: document-uuid\ntitle: Custom title\ntags: [one, two]\n# custom comment\n---\nHandwritten content\n';
+  fs.writeFileSync(store.resolve('Legacy.md'),content);const note=store.get('legacy-id');
+  assert.equal(note.documentId,doc.id);assert.doesNotMatch(note.content,/pdfsandwich_(?:note|document)_id/);assert.match(note.content,/tags: \[one, two\]/);assert.match(note.content,/# custom comment/);assert.match(note.content,/Handwritten content/);
+  const backup=fs.readdirSync(path.join(store.root,'.pdfsandwich','history','legacy-id'))[0];assert.equal(fs.readFileSync(path.join(store.root,'.pdfsandwich','history','legacy-id',backup),'utf8'),content);
+  const saved=store.save({id:note.id,version:note.version,base:note.content,content:'Only my own text'}).note;assert.equal(saved.documentId,doc.id);
+});
+
+test('Obsidian templates apply only to new notes; settings preserve chosen template',async t=>{
+  const {store,root}=fixture(t),vault=path.join(root,'Vault');fs.mkdirSync(path.join(vault,'Templates'),{recursive:true});
+  fs.writeFileSync(path.join(vault,'Templates','Paper.md'),'---\ntitle: "{{title}}"\nyear: "{{year}}"\n---\n# {{title}}\n{{authors}}\n{{abstract}}\n{{date:YYYY-MM-DD}}\n');
+  store.configure({mode:'obsidian',vault,notesFolder:'03Literature',templateFile:'Templates/Paper.md'});
+  const note=store.create({document:doc});assert.match(note.content,/# Example study/);assert.match(note.content,/Alice; Bob/);assert.doesNotMatch(note.content,/pdfsandwich_note_id|研究方法/);
+  store.configure({notesFolder:'03Literature'});assert.equal(store.settings().templateFile,'Templates/Paper.md');
+  fs.writeFileSync(path.join(vault,'.pdfsandwich','config.json'),JSON.stringify({version:1,notesFolder:'03Literature',templateFile:''}));
+  await new Promise(r=>setTimeout(r,650));assert.equal(store.create({title:'Blank'}).content,'');assert.equal(store.get(note.id).content,note.content);
+  store.configure({templateFile:'../secret.md'});assert.throws(()=>store.create({title:'Invalid'}),/文件夹|Vault/);
 });

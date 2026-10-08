@@ -80,8 +80,8 @@ function createResearch({app, BrowserWindow, dialog, shell, clipboard, root, use
     },
     notesObsidian:async({id})=>{
       const note=store().get(id),cfg=store().settings();if(cfg.mode!=='obsidian')throw new Error('请先在设置中选择 Obsidian Vault。');
-      const file=path.relative(cfg.vault,store().resolve(note.relative)).replace(/\\/g,'/');
-      await shell.openExternal(`obsidian://open?vault=${encodeURIComponent(cfg.vault)}&file=${encodeURIComponent(file)}`);
+      const file=store().resolve(note.relative);
+      try{await shell.openExternal(`obsidian://open?path=${encodeURIComponent(file)}`);}catch{throw new Error('无法启动 Obsidian。请先启动一次 Obsidian，并确认此 Vault 已在其中打开。');}
     },
     notesAsset:({id,relative})=>{const storage=store(),note=storage.get(id),file=storage.attachmentPath(String(relative),note.relative);if(!['.png','.jpg','.jpeg','.gif','.webp'].includes(path.extname(file).toLowerCase()))throw new Error('不支持的附件格式。');return asset(file);},
     notesWiki:({name,id})=>{
@@ -105,7 +105,6 @@ function createResearch({app, BrowserWindow, dialog, shell, clipboard, root, use
     researchLink:({link})=>navigate(link),
     researchCopy:({text})=>{clipboard.writeText(String(text).slice(0,1_000_000));return true;},
     researchExternal:({url})=>{const target=new URL(url);if(!['https:','http:'].includes(target.protocol))throw new Error('不支持此链接类型。');return shell.openExternal(target.href);},
-    researchParagraphs:({page})=>{const doc=getDoc();selectedFile('en',page);return python('research_paragraphs',{path:doc.path,page,translated:doc.translations[page]?.path});},
     researchExcerpt:async({items})=>{if(!Array.isArray(items)||items.length>50)throw new Error('请每次摘录不超过 50 页。');const result=[];for(const item of items)result.push(await excerptText(item));return result;},
     notesExcerpt:async({excerpts,bilingual=true,thought='',noteId,clipId,latex})=>{
       const document=currentDocument();if(!Array.isArray(excerpts)||!excerpts.length||excerpts.length>50)throw new Error('无效摘录。');let result;noteId=noteId||store().create({document}).id;

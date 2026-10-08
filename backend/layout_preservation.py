@@ -202,6 +202,8 @@ def install():
         self._sandwich_formula_id = -10000
         from reference_layout import split_references
         from layout_atoms import split_numbered_lists
+        from prose_layout import join_fragmented_prose
+        join_fragmented_prose(page)
         split_references(page)
         split_numbered_lists(page)
         preserve_algorithms(page, *self._sandwich_fonts)

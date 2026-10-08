@@ -33,11 +33,10 @@ try{
   const excerptNote=await call('notesForDocument',{documentId:id});assert.match(excerptNote.content,/pdfsandwich:\/\/document/);assert.match(excerptNote.content,/My handwritten idea/);
   await page.getByRole('button',{name:'只读',exact:true}).click();await page.locator('.markdown-body a').first().waitFor();await page.screenshot({path:'test-results/research-notes.png'});
   await page.locator('.markdown-body a').filter({hasText:'第 1 页'}).first().click();await page.locator('.reader-columns.layout-dual').waitFor();
-  await page.getByRole('button',{name:'段落对照',exact:true}).click();await page.locator('.paragraph-pair').first().waitFor();await page.screenshot({path:'test-results/research-paragraphs.png'});
   await page.getByRole('button',{name:'阅读与笔记设置',exact:true}).click();await page.getByRole('button',{name:/莫奈/}).click();await page.getByRole('button',{name:'关闭笔记设置'}).click();
   await page.getByRole('button',{name:'切换深色主题'}).click();await page.getByRole('button',{name:'文献库',exact:true}).click();await page.locator('.library-cover img').first().waitFor();await page.screenshot({path:'test-results/research-dark.png'});
   const nextWindow=app.waitForEvent('window');await call('notesPopout',{id:note.id});const popout=await nextWindow;
   if(popout){await popout.getByRole('textbox',{name:'实时 Markdown 编辑器'}).waitFor();}
-  assert.deepEqual(errors,[]);console.log(JSON.stringify({profile,gridCovers:true,contextMenu:true,notesAutosave:true,externalEdits:true,excerpt:true,deepLink:true,paragraphs:true,palettes:true,errors}));
+  assert.deepEqual(errors,[]);console.log(JSON.stringify({profile,gridCovers:true,contextMenu:true,notesAutosave:true,externalEdits:true,excerpt:true,deepLink:true,palettes:true,errors}));
 }catch(error){await page.screenshot({path:'test-results/research-failure.png'}).catch(()=>{});throw error;}
 finally{await app.evaluate(({app})=>app.exit(0)).catch(()=>{});}
