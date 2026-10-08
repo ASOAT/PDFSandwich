@@ -1,6 +1,6 @@
 {
   "name": "pdfsandwich",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "description": "Windows bilingual PDF reader with synchronized annotations",
   "author": "PDFSandwich contributors",
@@ -21,11 +21,24 @@
     "dist": "npm run build && electron-builder --win nsis --publish never"
   },
   "dependencies": {
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/language": "^6.13.1",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.14",
+    "@lezer/markdown": "^1.8.0",
     "electron-updater": "6.8.9",
+    "fast-xml-parser": "^5.11.2",
+    "katex": "^0.19.0",
     "lucide-react": "^0.577.0",
     "pdfjs-dist": "6.3.289",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "react-markdown": "^10.1.0",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
     "@types/react": "^19.2.0",
@@ -60,6 +73,16 @@
       {
         "from": "build-resources/licenses",
         "to": "licenses"
+      },
+      {
+        "from": "obsidian-plugin",
+        "to": "obsidian-plugin",
+        "filter": [
+          "main.js",
+          "manifest.json",
+          "styles.css",
+          "README.md"
+        ]
       }
     ],
     "win": {
@@ -81,11 +104,22 @@
         "repo": "PDFSandwich",
         "releaseType": "release"
       }
+    ],
+    "protocols": [
+      {
+        "name": "PDFSandwich document link",
+        "schemes": [
+          "pdfsandwich"
+        ]
+      }
     ]
   },
   "homepage": "https://asoat.github.io/PDFSandwich/",
   "repository": {
     "type": "git",
     "url": "https://github.com/ASOAT/PDFSandwich.git"
+  },
+  "overrides": {
+    "katex": "^0.19.0"
   }
 }

@@ -47,6 +47,9 @@ try {
   await page.getByRole('button',{name:'放大 Ctrl++',exact:true}).click();
   async function until(check){const end=Date.now()+20000;while(Date.now()<end){if(await check())return;await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('Update action did not complete');}
   await app.evaluate(({ dialog }) => { global.promptCount=0;dialog.showMessageBox = async () => ({ response: global.promptCount++===0?2:0 }); });
+  const note=await page.evaluate(()=>window.pdfsandwich.call('notesCreate',{title:'Update safety'}));
+  const next=app.waitForEvent('window');await page.evaluate(id=>window.pdfsandwich.call('notesPopout',{id}),note.id);const noteWindow=await next;
+  const editor=noteWindow.getByRole('textbox',{name:'实时 Markdown 编辑器'});await editor.waitFor();await editor.click();await editor.press('Control+End');await editor.press('Enter');await editor.pressSequentially('Saved before updating.');
   await page.getByRole('button',{name:'重启更新',exact:true}).click();
   await page.getByRole('button',{name:'重启并安装',exact:true}).click();
   await until(async()=>await app.evaluate(()=>global.promptCount===1)&&(await page.evaluate(()=>window.pdfsandwich.call('updateState'))).status==='downloaded');
@@ -54,12 +57,13 @@ try {
   await page.getByRole('button',{name:'重启并安装',exact:true}).click();
   await until(()=>app.evaluate(()=>!!global.installRequested));
   const saved = await page.evaluate(() => window.pdfsandwich.call('state'));
+  assert.match((await page.evaluate(id=>window.pdfsandwich.call('notesGet',{id}),note.id)).content,/Saved before updating/);
   assert.equal(saved.doc.dirty, false); assert.ok(saved.doc.backup);
   const draft = JSON.parse(await fs.readFile(path.join(profile, 'documents', saved.doc.id, 'draft.json')));
   assert.ok(draft.annotations.some(mark => mark.content === '升级时保留批注'));
   assert.equal(JSON.parse(await fs.readFile(path.join(profile, 'resume-update.json'))).path, sample);
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ packaged: true, progressUI: true, themes: 2, preferenceSaved: true, cancelInstallPreservesDocument: true, savedBeforeInstall: true, resumePrepared: true, errors }));
+  console.log(JSON.stringify({ packaged: true, progressUI: true, themes: 2, preferenceSaved: true, cancelInstallPreservesDocument: true, savedBeforeInstall: true,notesSavedBeforeInstall: true, resumePrepared: true, errors }));
 } finally { await app.evaluate(({ app }) => app.exit(0)).catch(() => {}); }
 
 const resumed = await electron.launch({ executablePath: path.join(root, `release/${version}/win-unpacked/PDFSandwich.exe`), env: { ...process.env, PDFSANDWICH_DATA_DIR: profile }, timeout: 60000 });

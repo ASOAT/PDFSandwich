@@ -14,9 +14,16 @@ def main():
         try:
             request = json.loads(line)
             operation = request["op"]
-            if operation not in {"inspect", "catalog", "sync_translation", "save_original", "extract_page", "map_annotation", "selection_geometry", "texts", "export_pdf", "search"}:
+            if operation not in {"inspect", "catalog", "sync_translation", "save_original", "extract_page", "map_annotation", "selection_geometry", "texts", "export_pdf", "search", "research_cover", "research_clip", "research_identifiers", "research_paragraphs", "formula_recognize"}:
                 raise ValueError("Unknown operation")
-            value = getattr(pdf_ops, operation)(**request.get("args", {}))
+            if operation.startswith('research_'):
+                import research
+                value = getattr(research, operation)(**request.get("args", {}))
+            elif operation == 'formula_recognize':
+                from formula_ocr import recognize
+                value = recognize(**request.get('args', {}))
+            else:
+                value = getattr(pdf_ops, operation)(**request.get("args", {}))
             response = {"id": request["id"], "result": value}
         except Exception as error:
             response = {"id": request.get("id"), "error": str(error)}

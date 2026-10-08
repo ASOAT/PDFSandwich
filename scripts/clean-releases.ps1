@@ -28,7 +28,7 @@ foreach ($target in $targets) {
   if ($target.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Refusing linked target: $resolved" }
   $children = @(if ($target.PSIsContainer) { Get-ChildItem -LiteralPath $resolved -Recurse -Force })
   if ($children | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }) { throw "Refusing directory containing links: $resolved" }
-  if ($children | Where-Object { $_.Name -eq '文献库' -or (-not $_.PSIsContainer -and $_.Extension -eq '.pdf') }) {
+  if ($children | Where-Object { $_.Name -in @('文献库','Library','Notes') -or (-not $_.PSIsContainer -and $_.Extension -eq '.pdf') }) {
     $skipped += [pscustomobject]@{ Path = $resolved; Reason = 'Contains a PDF library or PDF documents; retained' }
     continue
   }

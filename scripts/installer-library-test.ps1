@@ -13,6 +13,10 @@ $null = New-Item -ItemType Directory -Path (Join-Path $appDir 'locales') -Force
 [IO.File]::WriteAllText((Join-Path $appDir 'user-file.txt'),'Additional user file')
 [IO.File]::WriteAllText((Join-Path $appDir 'PDFSandwich.exe'),'Old program')
 [IO.File]::WriteAllText((Join-Path $appDir 'resources\app.asar'),'Old resources')
+foreach ($folder in @('Library','Notes')) {
+  $null = New-Item -ItemType Directory -Path (Join-Path $appDir $folder) -Force
+  [IO.File]::WriteAllText((Join-Path $appDir ($folder + '\preserve.txt')),'Keep my data')
+}
 $script = @"
 Unicode true
 RequestExecutionLevel user
@@ -37,4 +41,7 @@ if ([IO.File]::ReadAllText((Join-Path $libraryDir 'original.zh.pdf')) -ne 'Trans
 if (-not (Test-Path -LiteralPath (Join-Path $appDir 'user-file.txt'))) { throw 'User file lost' }
 if (Test-Path -LiteralPath (Join-Path $appDir 'PDFSandwich.exe')) { throw 'Old program not removed' }
 if (Test-Path -LiteralPath (Join-Path $appDir 'resources')) { throw 'Old resources not removed' }
-[pscustomobject]@{ LibraryPreserved = $true; TranslationPreserved = $true; UserFilesPreserved = $true; OldProgramRemoved = $true } | ConvertTo-Json
+foreach ($folder in @('Library','Notes')) {
+  if ([IO.File]::ReadAllText((Join-Path $appDir ($folder + '\preserve.txt'))) -ne 'Keep my data') { throw 'Library or notes lost' }
+}
+[pscustomobject]@{ NotesPreserved = $true; LibraryPreserved = $true; TranslationPreserved = $true; UserFilesPreserved = $true; OldProgramRemoved = $true } | ConvertTo-Json

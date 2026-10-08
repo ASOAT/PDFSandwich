@@ -57,3 +57,14 @@ Runtime adapters in `backend/layout_preservation.py`, `reference_layout.py` and
 `layout_runtime.py` preserve mathematical glyph groups, bibliography entries,
 heading numbers and translated text styles. They apply to the pinned BabelDOC
 version; the original dependency source and these adapters are included together.
+
+## Literature notes and local formula extraction
+
+- CodeMirror 6 and Lezer Markdown — MIT, https://github.com/codemirror/dev and https://github.com/lezer-parser/markdown . Exact package versions are in `package-lock.json`.
+- react-markdown, unified/remark/rehype — MIT, https://github.com/remarkjs/react-markdown .
+- KaTeX 0.19.0 — MIT, https://github.com/KaTeX/KaTeX . Font license files are included by the license collector.
+- YAML — ISC, https://github.com/eemeli/yaml . fast-xml-parser — MIT, https://github.com/NaturalIntelligence/fast-xml-parser .
+- Tokenizers 0.22.2 — Apache-2.0, https://github.com/huggingface/tokenizers .
+- RapidLaTeXOCR 0.0.9 inference source — MIT, https://github.com/RapidAI/RapidLaTeXOCR . The small inference runtime is vendored in `backend/formula_runtime/`, including the original LICENSE, provenance and a documented NumPy 2 scalar conversion. Its separately downloaded ONNX weights and tokenizer come from the pinned official v0.0.0 release; filenames and SHA-256 hashes are in `backend/formula_ocr.py`. No formula weights are bundled in the installer.
+
+Crossref and arXiv provide the optional online metadata lookup. Their bibliographic results retain the applicable upstream rights; retrieved metadata is not project-authored content. Obsidian is an optional external application, not bundled in PDFSandwich. The companion plugin uses the public Obsidian plugin API and is distributed under this project's AGPL-3.0-only license.

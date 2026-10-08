@@ -18,6 +18,8 @@ coverage/
 data/
 local-data/
 /文献库/
+/Library/
+/Notes/
 test-results/
 playwright-report/
 *.pdf

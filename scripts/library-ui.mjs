@@ -10,14 +10,14 @@ await fs.writeFile(path.join(profile,'updates.json'),JSON.stringify({autoCheck:f
 await fs.writeFile(path.join(profile,'settings.json'),JSON.stringify({provider:'local',autoTranslate:false,saveTranslation:false}));
 const originals=await Promise.all([1,2,3].map(i=>fs.readFile(path.join(sourceFolder,`example-${i}.pdf`))));
 const exe=process.env.PDFSANDWICH_TEST_EXE;let app,page;const errors=[];
-async function launch(){app=await electron.launch({...(exe?{executablePath:path.resolve(exe)}:{args:['.']}),cwd:root,env:{...process.env,PDFSANDWICH_DATA_DIR:profile},timeout:60000});page=await app.firstWindow();page.setDefaultTimeout(15000);page.on('pageerror',e=>errors.push(e.message));await page.getByRole('heading',{name:'全部文献'}).waitFor();}
+async function launch(){app=await electron.launch({...(exe?{executablePath:path.resolve(exe)}:{args:['.']}),cwd:root,env:{...process.env,PDFSANDWICH_DATA_DIR:profile},timeout:60000});page=await app.firstWindow();page.setDefaultTimeout(15000);page.on('pageerror',e=>errors.push(e.message));await page.getByRole('heading',{name:'全部文献'}).waitFor();await page.getByRole('button',{name:'列表视图',exact:true}).click();}
 const call=(action,args)=>page.evaluate(({action,args})=>window.pdfsandwich.call(action,args),{action,args});
 async function until(check){const end=Date.now()+40000;while(Date.now()<end){const s=await call('state');if(check(s))return s;await new Promise(resolve=>setTimeout(resolve,100));}throw Error('State timeout');}
 const checkPdf=file=>JSON.parse(execFileSync(path.join(root,'.venv/Scripts/python.exe'),['-c','import json,pymupdf,sys; d=pymupdf.open(sys.argv[1]); print(json.dumps({"pages":[p.get_text() for p in d],"annotations":[len(list(p.annots() or [])) for p in d]},ensure_ascii=True))',file],{encoding:'utf8'}));
 try{
  await launch();
  const result=await call('libraryImport',{paths:[1,2,3].map(i=>path.join(sourceFolder,`example-${i}.pdf`))});assert.equal(result.imported.length,3);assert.equal(result.errors.length,0);
- const id=result.imported[0],managed=result.library.documents.find(item=>item.id===id);assert.ok(managed.path.startsWith(path.join(profile,'library-files')));
+ const id=result.imported[0],managed=result.library.documents.find(item=>item.id===id);assert.ok(managed.path.startsWith(path.join(profile,'Library')));
  assert.equal((await call('libraryImport',{paths:[path.join(sourceFolder,'example-1.pdf')]})).library.documents.length,3);
  await page.getByRole('button',{name:'文献库',exact:true}).click();
  await page.getByRole('button',{name:'新建分类',exact:true}).click();await page.getByRole('textbox',{name:'分类名称'}).fill('计算机与机器人');await page.getByRole('button',{name:'保存分类'}).click();

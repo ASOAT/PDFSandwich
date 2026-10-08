@@ -40,4 +40,4 @@ try{
   if(errors.length)throw new Error(errors.join('; '));
   const report={packaged:Boolean(executable),leftZoomIn:true,rightZoomOut:true,normalScroll:true,pointerAnchorError:anchorError,horizontalAnchorError,browserZoom,errors};
   await fs.writeFile(`test-results/ctrl-wheel${executable?'-packaged':''}.json`,JSON.stringify(report,null,2));console.log(JSON.stringify(report));
-}finally{await app.evaluate(({app})=>app.exit(0)).catch(()=>{});}
+}catch(error){const p=await app.firstWindow();console.log(await p.evaluate(async()=>({state:await window.pdfsandwich.call('state'),readers:[...document.querySelectorAll('[data-reader]')].map(e=>({side:e.dataset.reader,top:e.scrollTop,width:e.clientWidth,pages:[...e.querySelectorAll('[data-page]')].map(p=>p.dataset.page)}))})));await p.screenshot({path:'test-results/zoom-failure.png'});throw error;}finally{await app.evaluate(({app})=>app.exit(0)).catch(()=>{});}

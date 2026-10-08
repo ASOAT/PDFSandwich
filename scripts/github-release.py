@@ -61,6 +61,7 @@ def main():
                 (directory/f'PDFSandwich-{options.version}-source.zip',f'PDFSandwich-{options.version}-source.zip'),
                 (directory/'SHA256SUMS.txt','SHA256SUMS.txt'),
                 (ROOT/'tmp/pdfs/release-sample.pdf','PDFSandwich-demo.pdf')]
+        assets.append((directory/f'PDFSandwich-Obsidian-{options.version}.zip',f'PDFSandwich-Obsidian-{options.version}.zip'))
         for file,_ in assets:
             if not file.is_file():raise RuntimeError(f'Missing release asset: {file.name}')
         sums=dict(line.split('  ',1)[::-1] for line in (directory/'SHA256SUMS.txt').read_text().splitlines() if line)

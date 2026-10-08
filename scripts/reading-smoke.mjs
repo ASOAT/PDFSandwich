@@ -56,4 +56,4 @@ try{
   assert.deepEqual(errors,[]);
   const report={packaged:Boolean(executable),saved,sameFile,afterRestart,staleDocumentIgnored:true,pendingScrollJump:true,wholeBookCurrentPageFirst:true,errors};
   await fs.writeFile(`test-results/reading-state${executable?'-packaged':''}.json`,JSON.stringify(report,null,2));console.log(JSON.stringify(report));
-}finally{if(app)await app.evaluate(({app})=>app.exit(0)).catch(()=>{});}
+}catch(error){console.error(JSON.stringify({doc:(await call('state')).doc,view:await snapshot()}));await page.screenshot({path:'test-results/reading-failure.png'});throw error;}finally{if(app)await app.evaluate(({app})=>app.exit(0)).catch(()=>{});}

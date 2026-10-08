@@ -24,6 +24,8 @@ try {
   await call('open',{path:file});await call('translate',{page:0});
   s=await until(s=>s.doc.translations[0]?.status==='ready');
   const seconds=s.doc.translations[0].seconds;
+  const paragraphs=await call('researchParagraphs',{page:0});assert.ok(paragraphs.some(p=>p.source&&/[\u4e00-\u9fff]/.test(p.target)));
+  const record=await call('notesForDocument',{documentId:s.doc.libraryId});assert.ok(record.documentId);
   await page.waitForFunction(()=>document.querySelector('[data-side="zh"] .textLayer')?.textContent.includes('神经网络')&&!document.querySelector('.page-rendering'));
   async function select(side,needle,tool) {
     await page.getByRole('button',{name:tool,exact:true}).click();
@@ -41,6 +43,8 @@ try {
   }
   await select('en','neural network','高亮文字');
   s=await until(s=>s.doc.annotations[0]?.accuracy==='phrase');assert.ok(s.doc.annotations[0].zh.rects.length);
+  const extracted=await call('researchExcerpt',{items:[s.doc.annotations[0]]});assert.match(extracted[0].source,/neural network/i);assert.match(extracted[0].translation,/神经网络/);
+  const excerpt=await call('notesExcerpt',{excerpts:extracted,thought:'Keep this definition.'});assert.match(excerpt.note.content,/神经网络/);
   await select('zh','梯度下降','下划线');
   s=await until(s=>s.doc.annotations[1]?.accuracy==='phrase');assert.ok(s.doc.annotations[1].en.rects.length);
   await call('annotate',{item:{id:'sample-note',page:0,kind:'note',origin:'en',en:{rects:[[515,185,533,203]]},color:'#83a96b',width:1.6,content:'Review this concept.',accuracy:'pending'}});
@@ -65,7 +69,7 @@ try {
   const dark=await samplePixels();assert.ok(dark.every(p=>p[0]<35&&p[1]<35&&p[2]<35));
   assert.ok(await page.locator('.mark-layer [data-mark-id]').count()>=6);
   await page.screenshot({path:`${target}/reader-dark.png`});
-  const report={packaged:Boolean(exe),seconds,light,dark,bidirectionalMarks:true,noteTextShared:true,retranslateRestored:true,saveReopen:true,errors,translated:s.doc.translations[0].path};
+  const report={packaged:Boolean(exe),seconds,light,dark,paragraphPairs:true,bilingualExcerpt:true,bidirectionalMarks:true,noteTextShared:true,retranslateRestored:true,saveReopen:true,errors,translated:s.doc.translations[0].path};
   await fs.writeFile(`test-results/release-ui${exe?'-packaged':''}.json`,JSON.stringify(report,null,2));
   assert.deepEqual(errors,[]);console.log(JSON.stringify(report));
 } finally {

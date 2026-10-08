@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, protocol, safeStorage, shell, net } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, protocol, safeStorage, shell, net, clipboard } = require('electron');
 const fs = require('node:fs');
 const fsp = fs.promises;
 const path = require('node:path');
@@ -10,11 +10,13 @@ const { cacheKey, parseRange, validSettings, readingPosition, PageQueue } = requ
 const { TranslationWorker } = require('./translation-worker.cjs');
 const { UpdateController } = require('./updates.cjs');
 const { Library } = require('./library.cjs');
+const { createResearch } = require('./research.cjs');
+const { migrateEnglishLibrary } = require('./library-migration.cjs');
 const { TranslationFileSaver, snapshotTranslation } = require('./translation-file.cjs');
 protocol.registerSchemesAsPrivileged([{ scheme: 'pdfsandwich', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }]);
 if (process.env.PDFSANDWICH_DATA_DIR) app.setPath('userData', path.resolve(process.env.PDFSANDWICH_DATA_DIR));
 const root = path.join(__dirname, '..');
-let win, worker, updates, library, libraryError = '', seq = 0, doc = null, busy = false, stopping = false, savePromise = null;
+let win, worker, updates, library, research, libraryError = '', seq = 0, doc = null, busy = false, stopping = false, savePromise = null;
 const queue = new PageQueue();
 const retranslatePages = new Set();
 let settings = { provider: 'local', localEngine: 'hy', useGlossary: true, glossary: '', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', autoTranslate: true, saveTranslation: false }, apiKey = '', recent = [];
@@ -65,7 +67,7 @@ function separatePython(op,args) {
   return new Promise((resolve,reject)=>{
     const child=spawn(command.exe,command.args,{windowsHide:true,env:{...process.env,PYTHONIOENCODING:'utf-8'}});
     let response;
-    const timer=setTimeout(()=>{child.kill();reject(new Error('保存译文超时，已保留之前的文件，请重试。'));},240000);
+    const timer=setTimeout(()=>{child.kill();reject(new Error('处理超时，请检查模型下载或文件夹权限后重试。'));},op==='formula_recognize'?1800000:240000);
     readline.createInterface({input:child.stdout}).on('line',line=>{try{response=JSON.parse(line);}catch{}});
     child.stderr.on('data',()=>{});
     child.on('error',error=>{clearTimeout(timer);reject(error);});
@@ -80,7 +82,7 @@ function jsonWrite(file, data) {
 function readJson(file, fallback) { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; } }
 function urlFor(file) { const id = crypto.randomUUID(); files.set(id, file); return `pdfsandwich://file/${id}`; }
 function publicSettings() { return { ...settings, hasKey: Boolean(apiKey) }; }
-function state() { return { doc, settings: publicSettings(), recent, canUndo: history.length > 0, canRedo: future.length > 0, queued: queue.length, translating: busy }; }
+function state() { if(doc)doc.libraryId=library?.data.documents.find(item=>item.path===doc.path)?.id;return { doc, settings: publicSettings(), recent, canUndo: history.length > 0, canRedo: future.length > 0, queued: queue.length, translating: busy }; }
 function emit() { if (win && !win.isDestroyed()) win.webContents.send('pdfsandwich:state', state()); }
 function persist() { if (doc) jsonWrite(draftPath(), { stamp: doc.stamp, annotations: doc.annotations, dirty: doc.dirty, translationFile:doc.translationFile, cacheVersion: doc.cacheVersion, translator: cacheKey(null, settings), translations: Object.fromEntries(Object.entries(doc.translations).filter(([,v]) => v.status === 'ready').map(([k,v]) => [k, { path: v.path, status: 'ready', warnings: v.warnings || 0, seconds: v.seconds, qualityVersion: v.qualityVersion || 5 }])), page: doc.currentPage, fraction: doc.currentFraction, zoom: doc.viewZoom }); }
 function remember() { history.push(structuredClone(doc.annotations)); if (history.length > 60) history.shift(); future = []; }
@@ -382,26 +384,40 @@ Object.assign(actions,{
   translationReveal:()=>{if(doc?.translationFile&&fs.existsSync(doc.translationFile.path))shell.showItemInFolder(doc.translationFile.path);}
 });
 
+let pendingDeepLink=process.argv.find(value=>value.startsWith('pdfsandwich://document/'));
+if(!process.env.PDFSANDWICH_DATA_DIR){
+  if(!app.requestSingleInstanceLock())app.quit();
+  else app.on('second-instance',(_event,args)=>{const link=args.find(value=>value.startsWith('pdfsandwich://document/'));if(link&&research)research.navigate(link).catch(error=>dialog.showErrorBox('打开文献链接失败',error.message));else{win?.show();win?.focus();}});
+  app.on('open-url',(event,url)=>{event.preventDefault();if(research)research.navigate(url).catch(error=>dialog.showErrorBox('打开文献链接失败',error.message));else pendingDeepLink=url;});
+}
 app.whenReady().then(() => {
   const stored = readJson(path.join(userDir(), 'settings.json'), {});
   settings = { ...settings, ...Object.fromEntries(Object.entries(stored).filter(([k]) => ['provider','baseUrl','model','autoTranslate','localEngine','useGlossary','glossary','saveTranslation'].includes(k))) };
   try { apiKey = stored.secret ? safeStorage.decryptString(Buffer.from(stored.secret, 'base64')) : ''; } catch { apiKey = ''; }
   recent = readJson(path.join(userDir(), 'recent.json'), []);
   try {
-    const storage=process.env.PDFSANDWICH_DATA_DIR?path.join(userDir(),'library-files'):path.join(app.isPackaged?path.dirname(app.getPath('exe')):root,'文献库');
-    library=new Library(path.join(userDir(),'library.json'),storage);library.migrate(recent);
+    const storage=process.env.PDFSANDWICH_DATA_DIR?path.join(userDir(),'Library'):path.join(app.isPackaged?path.dirname(app.getPath('exe')):root,'Library');
+    library=new Library(path.join(userDir(),'library.json'),storage);
+    try{const changes=migrateEnglishLibrary(library,userDir());for(const item of recent){const moved=changes.find(change=>change.from===item.path);if(moved)item.path=moved.to;}if(changes.length)jsonWrite(path.join(userDir(),'recent.json'),recent);}catch(error){dialog.showErrorBox('文献库目录暂未更名',error.message);}
+    library.migrate(recent);
   } catch(error){libraryError=error.message;}
   protocol.handle('pdfsandwich', async request => {
-    const file = files.get(new URL(request.url).pathname.slice(1)); if (!file) return new Response('Not found', { status: 404 });
+    const target = new URL(request.url);
+    const file = target.hostname==='asset'?research?.assets.get(target.pathname.slice(1)):files.get(target.pathname.slice(1)); if (!file) return new Response('Not found', { status: 404 });
     try {
       const size = (await fsp.stat(file)).size, range = parseRange(request.headers.get('range'), size);
       if (!range) return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${size}` } });
-      const headers = { 'Content-Type': 'application/pdf', 'Accept-Ranges': 'bytes', 'Content-Length': String(range.end-range.start+1), 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' };
+      const mime={'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp','.gif':'image/gif','.svg':'image/svg+xml'}[path.extname(file).toLowerCase()]||'application/pdf';
+      const headers = { 'Content-Type': mime, 'Accept-Ranges': 'bytes', 'Content-Length': String(range.end-range.start+1), 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' };
       if (range.partial) headers['Content-Range'] = `bytes ${range.start}-${range.end}/${size}`;
       return new Response(Readable.toWeb(fs.createReadStream(file, { start: range.start, end: range.end })), { status: range.partial ? 206 : 200, headers });
     } catch { return new Response('File unavailable', { status: 404 }); }
   });
   win = new BrowserWindow({ width: 1480, height: 960, minWidth: 1000, minHeight: 650, backgroundColor: '#f4f3ef', title: 'PDFSandwich', icon: path.join(root, 'dist', 'icon.png'), autoHideMenuBar: true, webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false } });
+  research=createResearch({app,BrowserWindow,dialog,shell,clipboard,root,userDir,library,getDoc:()=>doc,getWindow:()=>win,python,separatePython,openDocument,emit});
+  Object.assign(actions,research.actions);
+  app.once('will-quit',()=>research.dispose());
+  if(app.isPackaged&&!process.env.PDFSANDWICH_DATA_DIR)app.setAsDefaultProtocolClient('pdfsandwich');
   const updateConfig = readJson(path.join(userDir(), 'updates.json'), {});
   const updateLibrary = app.isPackaged && process.platform === 'win32' ? require('electron-updater') : null;
   updates = new UpdateController({
@@ -410,6 +426,7 @@ app.whenReady().then(() => {
     onChange: value => { if (!win.isDestroyed()) win.webContents.send('pdfsandwich:update', value); },
     savePreference: autoCheck => jsonWrite(path.join(userDir(), 'updates.json'), { autoCheck }),
     beforeInstall: async () => {
+      if(!await research.flush())throw new Error('请先保存或处理笔记编辑冲突，再安装更新。');
       if (!await mayLeave()) return false;
       if (savePromise) await savePromise;
       await stopTranslation();
@@ -437,13 +454,14 @@ app.whenReady().then(() => {
   app.once('will-quit', () => updates.dispose());
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', event => event.preventDefault());
-  ipcMain.handle('pdfsandwich:call', async (event, action, args) => { if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame || !Object.hasOwn(actions, action)) throw new Error('未知操作。'); if (updates.snapshot().status === 'installing' && !['updateState', 'state'].includes(action)) throw new Error('正在准备安装更新，请稍候。'); return actions[action](args || {}); });
+  ipcMain.handle('pdfsandwich:call', async (event, action, args) => { const primary=event.sender===win.webContents&&event.senderFrame===win.webContents.mainFrame;const secondary=research.trusted(event)&&/^(notes|research)/.test(action);if((!primary&&!secondary)||!Object.hasOwn(actions,action))throw new Error('未知操作。'); if (updates.snapshot().status === 'installing' && !['updateState', 'state', 'notesSave', 'notesGet', 'notesFlushed'].includes(action)) throw new Error('正在准备安装更新，请稍候。'); return actions[action](args || {}); });
   if (process.env.PDFSANDWICH_DEV_URL === 'http://127.0.0.1:5173') win.loadURL(process.env.PDFSANDWICH_DEV_URL); else win.loadFile(path.join(root, 'dist', 'index.html'));
-  win.on('close', event => { if (stopping) return; event.preventDefault(); if (updates.snapshot().status === 'installing') return; mayLeave().then(async yes => { if (yes) { stopping = true; await stopTranslation(); await Promise.allSettled([...mappingTasks]); await translationSaver.flush(); worker?.kill(); win.destroy(); app.quit(); } }).catch(error => dialog.showErrorBox('保存失败', redact(error.message))); });
+  win.on('close', event => { if (stopping) return; event.preventDefault(); if (updates.snapshot().status === 'installing') return; research.flush().then(ok=>ok?mayLeave():false).then(async yes => { if (yes) { stopping = true; await stopTranslation(); await Promise.allSettled([...mappingTasks]); await translationSaver.flush(); worker?.kill(); win.destroy(); app.quit(); } }).catch(error => dialog.showErrorBox('保存失败', redact(error.message))); });
   const resumeFile = path.join(userDir(), 'resume-update.json');
   const resume = readJson(resumeFile, null);
   if (fs.existsSync(resumeFile)) fs.unlinkSync(resumeFile);
   const argument = process.argv.find(x => /\.pdf$/i.test(x) && fs.existsSync(x)) || (typeof resume?.path === 'string' && fs.existsSync(resume.path) ? resume.path : null);
   if (argument) win.webContents.once('did-finish-load', () => openDocument(argument).catch(error => dialog.showErrorBox('打开失败', error.message)));
+  if(pendingDeepLink)win.webContents.once('did-finish-load',()=>research.navigate(pendingDeepLink).catch(error=>dialog.showErrorBox('打开文献链接失败',error.message)));
 });
 app.on('window-all-closed', () => app.quit());

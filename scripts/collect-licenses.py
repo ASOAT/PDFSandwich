@@ -32,3 +32,5 @@ shutil.copyfile(root/'LICENSE',destination/'PDFSandwich-LICENSE.txt')
 print(f'Collected notices for {len(inventory)} installed build/runtime dependencies.')
 
 shutil.copytree(root/'licenses',destination/'models',dirs_exist_ok=True)
+
+shutil.copytree(root/'backend/formula_runtime',destination/'formula-runtime',ignore=shutil.ignore_patterns('*.py','*.pyc','__pycache__','config.yaml'),dirs_exist_ok=True)

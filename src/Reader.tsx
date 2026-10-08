@@ -3,13 +3,14 @@ import { TextLayer, AnnotationMode, type PDFPageProxy } from 'pdfjs-dist';
 import { Languages, LoaderCircle, MessageSquare, RotateCcw } from 'lucide-react';
 import { acquirePdf, clearPdfCache } from './pdf';
 import { selectionMarks } from './selection';
+import { ContextMenu, type MenuItem } from './ContextMenu';
 import { fromView, toView, transformRect, viewSize, mergeRects } from './geometry';
 import type { Document, Mark, PageInfo, Point, Rect, Side, Tool, Match } from './types';
 
 export type ReaderHandle = { go: (page: number, fraction?: number) => void; captureZoomAnchor: (x?: number, y?: number) => void };
-type Props = { doc: Document; side: Side; theme: 'light' | 'dark'; zoom: number; tool: Tool; color: string; marks: Mark[]; matches: Match[]; onPosition: (page: number, fraction: number) => void; onWheelZoom: (factor: number, x: number, y: number) => void; onMark: (mark: Mark | Mark[]) => void; onSelectMark: (id: string) => void; onTranslate: (page: number) => void; onError: (message: string) => void };
+type Props = { doc: Document; side: Side; theme: 'light' | 'dark'; zoom: number; tool: Tool; color: string; marks: Mark[]; matches: Match[]; onPosition: (page: number, fraction: number) => void; onWheelZoom: (factor: number, x: number, y: number) => void; onMark: (mark: Mark | Mark[]) => void; onSelectMark: (id: string) => void; onTranslate: (page: number) => void; onError: (message: string) => void; onExcerpt?:(marks:Mark[])=>void;onCapture?:(side:Side,page:number,rect:Rect,formula:boolean)=>void };
 
-function PdfPage({ doc, side, theme, page: index, scale, info, tool, color, marks, matches, onMark, onSelectMark, onError }: Omit<Props,'zoom'|'onPosition'|'onTranslate'> & { page: number; scale: number; info: PageInfo }) {
+function PdfPage({ doc, side, theme, page: index, scale, info, tool, color, marks, matches, onMark, onSelectMark, onError, onCapture }: Omit<Props,'zoom'|'onPosition'|'onTranslate'> & { page: number; scale: number; info: PageInfo }) {
   const canvas = useRef<HTMLCanvasElement>(null), text = useRef<HTMLDivElement>(null), surface = useRef<HTMLDivElement>(null);
   const [rendering, setRendering] = useState(true), [error, setError] = useState(''), [stroke, setStroke] = useState<Point[]>([]);
   const pen = useRef<Point[]>([]), drawing = useRef(false);
@@ -45,17 +46,17 @@ function PdfPage({ doc, side, theme, page: index, scale, info, tool, color, mark
   const point = (event: React.PointerEvent): Point => { const bounds = surface.current!.getBoundingClientRect(); return fromView([Math.max(0,Math.min(size[0],(event.clientX-bounds.left)/scale)),Math.max(0,Math.min(size[1],(event.clientY-bounds.top)/scale))],info); };
   const pathData = (points: Point[]) => points.map((p,i) => { const [x,y] = toView(p,info); return `${i?'L':'M'}${x},${y}`; }).join(' ');
   return <div ref={surface} className={`pdf-surface tool-${tool}`} data-page={index+1} data-side={side} style={{ width: size[0]*scale, height: size[1]*scale }}
-    onPointerDown={e=>{ if (rendering || error) return; if (tool==='ink') { e.preventDefault(); surface.current!.setPointerCapture(e.pointerId); drawing.current=true; pen.current=[point(e)]; setStroke(pen.current); } else if (tool==='note') { e.preventDefault(); const [x,y]=point(e); add('note',[[x,y,x+18,y+18]]); } }}
+    onPointerDown={e=>{ if (rendering || error || e.button!==0) return; if (tool==='ink'||tool==='capture'||tool==='formula') { e.preventDefault(); surface.current!.setPointerCapture(e.pointerId); drawing.current=true; pen.current=[point(e)]; setStroke(pen.current); } else if (tool==='note') { e.preventDefault(); const [x,y]=point(e); add('note',[[x,y,x+18,y+18]]); } }}
     onPointerMove={e=>{if(drawing.current){pen.current=[...pen.current,point(e)];setStroke(pen.current);}}}
     onPointerCancel={()=>{drawing.current=false;pen.current=[];setStroke([]);}}
-    onPointerUp={e=>{if(drawing.current){drawing.current=false;surface.current!.releasePointerCapture(e.pointerId);const points=pen.current;if(points.length>1){const xs=points.map(p=>p[0]),ys=points.map(p=>p[1]);add('ink',[[Math.min(...xs),Math.min(...ys),Math.max(...xs)+.1,Math.max(...ys)+.1]],[points]);}pen.current=[];setStroke([]);}}}>
+    onPointerUp={e=>{if(drawing.current){drawing.current=false;surface.current!.releasePointerCapture(e.pointerId);const points=pen.current;if(points.length>1){if(tool==='capture'||tool==='formula'){const a=points[0],b=point(e);const rect:Rect=[Math.min(a[0],b[0]),Math.min(a[1],b[1]),Math.max(a[0],b[0]),Math.max(a[1],b[1])];if(rect[2]-rect[0]>3&&rect[3]-rect[1]>3)onCapture?.(side,index,rect,tool==='formula');}else{const xs=points.map(p=>p[0]),ys=points.map(p=>p[1]);add('ink',[[Math.min(...xs),Math.min(...ys),Math.max(...xs)+.1,Math.max(...ys)+.1]],[points]);}}pen.current=[];setStroke([]);}}}>
     <canvas ref={canvas}/><div ref={text} className="textLayer"/>
     <svg className="mark-layer" viewBox={`0 0 ${size[0]} ${size[1]}`}>
       {matches.flatMap((match,i)=>match.rects.map((rect,j)=>{const r=transformRect(rect,info);return <rect key={`s${i}-${j}`} x={r[0]} y={r[1]} width={r[2]-r[0]} height={r[3]-r[1]} fill="#ff992e" opacity=".35"/>;}))}
       {marks.map(mark=>{const geo=mark[side];if(!geo)return null;return <g key={mark.id} data-mark-id={mark.id} className={tool==='select'?'mark-clickable':''} opacity={mark.kind==='highlight'?.32:1} onClick={e=>{if(tool==='select'){e.stopPropagation();onSelectMark(mark.id);}}}>
         {mark.kind==='ink'?geo.paths?.map((points,i)=><path key={i} d={pathData(points)} fill="none" stroke={mark.color} strokeWidth={mark.width} strokeLinecap="round" strokeLinejoin="round"/>):mergeRects(geo.rects).map((rect,i)=>{const r=transformRect(rect,info);return mark.kind==='note'?<g key={i} transform={`translate(${r[0]},${r[1]})`}><rect width="18" height="18" rx="4" fill={mark.color}/><path d="M4 5H14M4 9H12M4 13H9" stroke="white" strokeWidth="1.4"/></g>:mark.kind==='underline'?<line key={i} x1={r[0]} x2={r[2]} y1={r[3]-1} y2={r[3]-1} stroke={mark.color} strokeWidth="1.2"/>:<rect key={i} x={r[0]} y={r[1]} width={r[2]-r[0]} height={r[3]-r[1]} fill={mark.color}/>;})}
       </g>;})}
-      {stroke.length>1&&<path d={pathData(stroke)} fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round"/>}
+      {stroke.length>1&&(tool==='capture'||tool==='formula'?(()=>{const a=toView(stroke[0],info),b=toView(stroke.at(-1)!,info);return <rect x={Math.min(a[0],b[0])} y={Math.min(a[1],b[1])} width={Math.abs(a[0]-b[0])} height={Math.abs(a[1]-b[1])} fill="#5371cb22" stroke="#5371cb" strokeWidth="1" strokeDasharray="4 3"/>;})():<path d={pathData(stroke)} fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round"/>)}
     </svg>
     {rendering&&<div className="page-rendering"><LoaderCircle size={20} className="spin"/></div>}
     {error&&<div className="page-error">此页无法渲染：{error}</div>}
@@ -115,6 +116,18 @@ export const Reader = forwardRef<ReaderHandle, Props>((props, ref) => {
     return()=>node.removeEventListener('wheel',wheel);
   },[]);
   const [selectionAnchor,setSelectionAnchor]=useState<number|null>(null);
+  const [menu,setMenu]=useState<{x:number;y:number;items:MenuItem[]}|null>(null);
+  function context(event:React.MouseEvent){
+    event.preventDefault();const selection=window.getSelection(),node=viewport.current!;
+    const selected=selection?.rangeCount&&!selection.isCollapsed?selectionMarks(node,selection.getRangeAt(0),doc,side,scale,'highlight',props.color):[];
+    const marked=(event.target as Element).closest('[data-mark-id]')?.getAttribute('data-mark-id');
+    const existing=props.marks.find(m=>m.id===marked),items:MenuItem[]=[];
+    if(selected.length){items.push({label:'高亮选中文字',action:()=>{selection?.removeAllRanges();props.onMark(selected);}},{label:'添加下划线',action:()=>{selection?.removeAllRanges();props.onMark(selected.map(m=>({...m,kind:'underline'})));}},{label:'复制选中文字',action:()=>{void window.pdfsandwich.call('researchCopy',{text:selected.map(m=>m.selectedText||'').join('\n')});}},{label:'加入文献笔记…',action:()=>props.onExcerpt?.(selected),separator:true});}
+    else if(existing)items.push({label:'编辑批注',action:()=>props.onSelectMark(existing.id)},{label:'加入文献笔记…',action:()=>props.onExcerpt?.([existing])});
+    const pageNode=(event.target as Element).closest<HTMLElement>('[data-page]'),page=pageNode?Number(pageNode.dataset.page)-1:doc.currentPage;
+    items.push({label:'复制本页引用链接',separator:true,action:()=>{void window.pdfsandwich.call('researchCopy',{text:`pdfsandwich://document/${doc.libraryId}?page=${page+1}`});}},{label:'优先翻译此页',action:()=>onTranslate(page)});
+    setMenu({x:event.clientX,y:event.clientY,items});
+  }
   const finishSelection=useRef<(event:MouseEvent)=>void>(()=>{});
   finishSelection.current=event=>{
     const selection=window.getSelection(),node=viewport.current;
@@ -129,7 +142,7 @@ export const Reader = forwardRef<ReaderHandle, Props>((props, ref) => {
   useEffect(()=>{const finish=(event:MouseEvent)=>finishSelection.current(event);window.addEventListener('mouseup',finish);return()=>window.removeEventListener('mouseup',finish);},[]);
   useEffect(()=>setSelectionAnchor(null),[doc.sourceUrl,props.tool]);
   const begin=Math.max(0,indexAt(scrollTop)-1),end=Math.min(doc.pages.length-1,indexAt(scrollTop+height)+1);
-  return <div className="reader-scroll" ref={viewport} data-reader={side} onMouseDownCapture={event=>{if(['highlight','underline'].includes(props.tool)){const surface=(event.target as Element).closest<HTMLElement>('.pdf-surface');if(surface)setSelectionAnchor(Number(surface.dataset.page)-1);}}} onScroll={()=>{
+  return <div className="reader-scroll" ref={viewport} data-reader={side} onContextMenu={context} onMouseDownCapture={event=>{if(event.button===0&&['select','highlight','underline'].includes(props.tool)){const surface=(event.target as Element).closest<HTMLElement>('.pdf-surface');if(surface)setSelectionAnchor(Number(surface.dataset.page)-1);}}} onScroll={()=>{
     if(!viewport.current?.clientWidth)return;
     const top=viewport.current!.scrollTop;setScrollTop(top);
     if(ignoredTop.current!==null&&Math.abs(top-Math.min(ignoredTop.current,total-height))<2){ignoredTop.current=null;return;}
@@ -144,5 +157,5 @@ export const Reader = forwardRef<ReaderHandle, Props>((props, ref) => {
         {translation?.status==='translating'?<><div className="progress-track"><i style={{width:`${Math.max(3,translation.progress)}%`}}/></div><small>{Math.round(translation.progress)}%</small></>:<button className="button secondary" onClick={()=>onTranslate(page)}>{translation?.status==='error'?<RotateCcw size={15}/>:<Languages size={15}/>} {translation?.status==='queued'?'优先翻译此页':translation?.status==='error'?'重试此页':'翻译此页及下一页'}</button>}
       </div>}
     </div>;})}
-  </div></div>;
+  </div>{menu&&<ContextMenu {...menu} onClose={()=>setMenu(null)}/>}</div>;
 });

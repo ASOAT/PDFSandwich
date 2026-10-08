@@ -59,6 +59,7 @@ artifacts=[(directory/f'PDFSandwich-Setup-{version}.exe',f'PDFSandwich-Setup-{ve
            (directory/f'PDFSandwich-Setup-{version}.exe.blockmap',f'PDFSandwich-Setup-{version}.exe.blockmap'),
            (directory/'latest.yml','latest.yml'),(target,target.name),
            (root/'tmp/pdfs/release-sample.pdf','PDFSandwich-demo.pdf')]
+artifacts.append((directory/f'PDFSandwich-Obsidian-{version}.zip',f'PDFSandwich-Obsidian-{version}.zip'))
 checksums=[]
 for file,name in artifacts:
     with file.open('rb') as stream:digest=hashlib.file_digest(stream,'sha256').hexdigest()

@@ -80,7 +80,7 @@ class Library {
   editDocument(id, changes) {
     const original = this.get(id);
     const item = { ...original };
-    for (const [key,limit] of Object.entries({ title:500, authors:500, year:20, notes:10000 })) {
+    for (const [key,limit] of Object.entries({ title:500, authors:2000, year:20, notes:10000, doi:300, abstract:20000, bibtex:30000, journal:1000, url:1000 })) {
       if (Object.hasOwn(changes,key)) item[key] = text(changes[key],limit);
     }
     if (!item.title) item.title = path.basename(item.path, '.pdf');
