@@ -13,7 +13,7 @@ export function LibraryView({onOpen,onError,onNotify,refresh,onNote}:{onOpen:(id
   const [data,setData]=useState<LibraryState>({storageRoot:'',collections:[],documents:[]});
   const [loading,setLoading]=useState(true),[working,setWorking]=useState(false),[query,setQuery]=useState(''),[filter,setFilter]=useState('all'),[tagFilter,setTagFilter]=useState<string[]>([]),[selected,setSelected]=useState<string[]>([]),[sort,setSort]=useState('recent');
   const [collectionDialog,setCollectionDialog]=useState<{id?:string;name:string;parentId:string|null}|null>(null);
-  const [remove,setRemove]=useState<{kind:'documents'|'collection';ids:string[];name:string}|null>(null),[storageOpen,setStorageOpen]=useState(false);
+  const [remove,setRemove]=useState<{kind:'documents'|'collection';ids:string[];name:string;deletePdf?:boolean}|null>(null),[storageOpen,setStorageOpen]=useState(false),[removing,setRemoving]=useState(false);
   const [batchCollection,setBatchCollection]=useState(''),[batchTag,setBatchTag]=useState('');
   async function invoke<T>(action:string,args?:unknown){try{return await window.pdfsandwich.call<T>(action,args);}catch(error){onError((error as Error).message.replace(/^Error invoking remote method '[^']+': Error: /,''));}}
   async function change(action:string,args?:unknown){const result=await invoke<LibraryState>(action,args);if(result)setData(result);return result;}
@@ -38,7 +38,30 @@ export function LibraryView({onOpen,onError,onNotify,refresh,onNote}:{onOpen:(id
     setWorking(false);
   }
   async function copyBibtex(id:string){const text=await invoke<string>('metadataBibtex',{id});if(text){await invoke('researchCopy',{text});onNotify('BibTeX 已复制');}}
-  function context(event:React.MouseEvent,row:LibraryDocument){event.preventDefault();const ids=selected.includes(row.id)?selected:[row.id];setSelected(ids);const items:MenuItem[]=[{label:'打开阅读',action:()=>void onOpen(row.id)},{label:'打开文献笔记',action:()=>onNote(row.id)},{label:'检索元数据…',action:()=>setMetadata(row)},{label:'复制 BibTeX',action:()=>void copyBibtex(row.id)},{label:'文献库文件位置',separator:true,action:()=>void invoke('libraryReveal',{id:row.id})},{label:'原始导入文件位置',action:()=>void invoke('libraryOriginal',{id:row.id})}];if(row.translationPath)items.push({label:'译文文件位置',action:()=>void invoke('libraryReveal',{id:row.id,translation:true})});items.push({label:'复制文献引用链接',action:()=>void invoke<string>('libraryLink',{id:row.id}).then(text=>text&&invoke('researchCopy',{text}))});for(const {collection:c,depth} of flat)items.push({label:`移至 ${'　'.repeat(depth)}${c.name}`,separator:items.length===7,action:()=>void change('libraryMove',{ids,collectionId:c.id})});items.push({label:'移至未分类',action:()=>void change('libraryMove',{ids,collectionId:null})},{label:'移出文献库…',danger:true,separator:true,action:()=>setRemove({kind:'documents',ids,name:ids.length>1?`${ids.length} 份文献`:row.title})});setMenu({x:event.clientX,y:event.clientY,items});}
+  function moveMenu(ids:string[],parentId:string|null=null,depth=0):MenuItem[]{
+    return data.collections.filter(c=>c.parentId===parentId).sort((a,b)=>a.name.localeCompare(b.name,'zh-CN')).map(c=>{
+      const action=()=>void change('libraryMove',{ids,collectionId:c.id});
+      const children=depth<20?moveMenu(ids,c.id,depth+1):[];
+      return children.length?{label:c.name,children:[{label:'移至此分类',action},...children.map((item,index)=>({...item,separator:index===0}))]}:{label:c.name,action};
+    });
+  }
+  async function confirmRemove(){
+    if(!remove||removing)return;
+    setRemoving(true);
+    try {
+      if(remove.kind==='collection'){
+        if(await change('libraryRemoveCollection',{id:remove.ids[0]})){setRemove(null);setSelected([]);setFilter('all');}
+      } else {
+        const result=await invoke<LibraryState&{removed:string[];errors:{id:string;name:string;error:string}[]}>('libraryRemove',{ids:remove.ids,deletePdf:remove.deletePdf!==false});
+        if(result){
+          setData(result);setSelected(result.errors.map(item=>item.id));setRemove(null);
+          if(result.removed.length)onNotify(`已移除 ${result.removed.length} 份文献`);
+          if(result.errors.length)onError(result.errors.map(item=>`${item.name}：${item.error}`).join('\n'));
+        }
+      }
+    } finally {setRemoving(false);}
+  }
+  function context(event:React.MouseEvent,row:LibraryDocument){event.preventDefault();const ids=selected.includes(row.id)?selected:[row.id];setSelected(ids);const items:MenuItem[]=[{label:'打开阅读',action:()=>void onOpen(row.id)},{label:'打开文献笔记',action:()=>onNote(row.id)},{label:'检索元数据…',action:()=>setMetadata(row)},{label:'复制 BibTeX',action:()=>void copyBibtex(row.id)},{label:'文献库文件位置',separator:true,action:()=>void invoke('libraryReveal',{id:row.id})},{label:'原始导入文件位置',action:()=>void invoke('libraryOriginal',{id:row.id})}];if(row.translationPath)items.push({label:'译文文件位置',action:()=>void invoke('libraryReveal',{id:row.id,translation:true})});items.push({label:'复制文献引用链接',action:()=>void invoke<string>('libraryLink',{id:row.id}).then(text=>text&&invoke('researchCopy',{text}))});items.push({label:'移至分类',separator:true,children:[{label:'未分类',action:()=>void change('libraryMove',{ids,collectionId:null})},...moveMenu(ids)]},{label:'移出文献库…',danger:true,separator:true,action:()=>setRemove({kind:'documents',ids,name:ids.length>1?`${ids.length} 份文献`:row.title})});setMenu({x:event.clientX,y:event.clientY,items});}
   function toggle(id:string){setSelected(ids=>ids.includes(id)?ids.filter(value=>value!==id):[...ids,id]);}
   function selectFilter(id:string){setFilter(id);setSelected([]);}
   return <main className="library-workspace" onDragOver={event=>event.preventDefault()} onDrop={event=>{event.preventDefault();event.stopPropagation();void importFiles([...event.dataTransfer.files].map(file=>window.pdfsandwich.pathForFile(file)));}}>
@@ -47,7 +70,7 @@ export function LibraryView({onOpen,onError,onNotify,refresh,onNote}:{onOpen:(id
       <button className={`library-nav-row ${filter==='all'?'active':''}`} onClick={()=>selectFilter('all')}><BookOpen size={16}/><span>全部文献</span><small>{data.documents.length}</small></button>
       <button className={`library-nav-row ${filter==='unfiled'?'active':''}`} onClick={()=>selectFilter('unfiled')}><Inbox size={16}/><span>未分类</span><small>{data.documents.filter(item=>!item.collections.length).length}</small></button>
       <div className="library-nav-heading"><span>分类</span><button aria-label="新建分类" title="新建分类" onClick={()=>setCollectionDialog({name:'',parentId:collection?.id||null})}><FolderPlus size={16}/></button></div>
-      <div className="collection-list">{flat.map(({collection:c,depth})=><div className={`collection-row ${filter===c.id?'active':''}`} key={c.id}><button style={{paddingLeft:14+depth*14}} onClick={()=>selectFilter(c.id)}><Folder size={15}/><span>{c.name}</span><small>{data.documents.filter(item=>item.collections.some(id=>descendants(c.id).has(id))).length}</small></button><button className="collection-edit" title={`编辑分类 ${c.name}`} aria-label={`编辑分类 ${c.name}`} onClick={()=>setCollectionDialog({...c})}><MoreHorizontal size={15}/></button></div>)}{!flat.length&&<p className="library-small-empty">按课程、课题或项目分类</p>}</div>
+      <div className="collection-list">{flat.map(({collection:c,depth})=><div className={`collection-row ${filter===c.id?'active':''}`} key={c.id}><button style={{paddingLeft:14+depth*14}} onClick={()=>selectFilter(c.id)}><Folder size={15}/><span>{c.name}</span><small>{data.documents.filter(item=>item.collections.some(id=>descendants(c.id).has(id))).length}</small></button><button className="collection-add" title={`在 ${c.name} 下新建子分类`} aria-label={`在 ${c.name} 下新建子分类`} onClick={()=>setCollectionDialog({name:'',parentId:c.id})}><FolderPlus size={15}/></button><button className="collection-edit" title={`编辑分类 ${c.name}`} aria-label={`编辑分类 ${c.name}`} onClick={()=>setCollectionDialog({...c})}><MoreHorizontal size={15}/></button></div>)}{!flat.length&&<p className="library-small-empty">按课程、课题或项目分类</p>}</div>
       <div className="library-nav-heading"><span>标签</span>{tagFilter.length>0&&<button onClick={()=>setTagFilter([])}>清除</button>}</div>
       <div className="library-tag-list">{tags.map(tag=><button key={tag} className={tagFilter.includes(tag)?'active':''} onClick={()=>setTagFilter(list=>list.includes(tag)?list.filter(item=>item!==tag):[...list,tag])}><Tag size={12}/>{tag}</button>)}{!tags.length&&<p className="library-small-empty">选择文献后添加标签</p>}</div>
       <button className="library-storage" onClick={()=>setStorageOpen(true)} title={data.storageRoot}><Settings2 size={15}/><span>文献库存储位置</span></button>
@@ -64,7 +87,14 @@ export function LibraryView({onOpen,onError,onNotify,refresh,onNote}:{onOpen:(id
     {metadata&&<MetadataDialog item={metadata} onClose={()=>setMetadata(null)} onApply={setData}/>}
     {working&&<div className="busy-overlay"><LoaderCircle className="spin" size={22}/>正在复制 PDF 到文献库…</div>}
     {collectionDialog&&<div className="modal-backdrop"><form className="library-dialog" role="dialog" aria-label="编辑分类" onSubmit={async event=>{event.preventDefault();if(await change('libraryCollection',collectionDialog))setCollectionDialog(null);}}><div className="modal-title"><h2>{collectionDialog.id?'编辑分类':'新建分类'}</h2><button type="button" aria-label="关闭分类编辑" onClick={()=>setCollectionDialog(null)}><X size={19}/></button></div><label>名称<input autoFocus aria-label="分类名称" value={collectionDialog.name} onChange={event=>setCollectionDialog({...collectionDialog,name:event.target.value})} maxLength={100} required/></label><label>上级分类<select aria-label="上级分类" value={collectionDialog.parentId||''} onChange={event=>setCollectionDialog({...collectionDialog,parentId:event.target.value||null})}><option value="">无（顶级分类）</option>{flat.filter(({collection:c})=>!collectionDialog.id||!descendants(collectionDialog.id).has(c.id)).map(({collection:c,depth})=><option key={c.id} value={c.id}>{'　'.repeat(depth)}{c.name}</option>)}</select></label><div className="library-dialog-actions">{collectionDialog.id&&<button type="button" className="library-remove" onClick={()=>{setRemove({kind:'collection',ids:[collectionDialog.id!],name:collectionDialog.name});setCollectionDialog(null);}}><Trash2 size={14}/>删除分类</button>}<button className="button primary" type="submit">保存分类</button></div></form></div>}
-    {remove&&<div className="modal-backdrop"><section className="library-dialog" role="dialog" aria-label="确认移除"><h2>{remove.kind==='collection'?'删除分类':'移出文献库'}</h2><p>{remove.name}</p><p>{remove.kind==='collection'?'删除此分类及其子分类，文献仍保留在全部文献中。':'移除管理记录，已导入的 PDF 和译文仍保留在磁盘上。'}</p><div className="library-dialog-actions"><button className="button secondary" onClick={()=>setRemove(null)}>取消</button><button className="button primary" onClick={async()=>{const result=await change(remove.kind==='collection'?'libraryRemoveCollection':'libraryRemove',remove.kind==='collection'?{id:remove.ids[0]}:{ids:remove.ids});if(result){setRemove(null);setSelected([]);if(remove.kind==='collection')setFilter('all');}}}>确认移除</button></div></section></div>}
+    {remove&&<div className="modal-backdrop"><section className="library-dialog" role="dialog" aria-modal="true" aria-label="确认移除" aria-busy={removing}>
+      <h2>{remove.kind==='collection'?'删除分类':'移出文献库'}</h2><p>{remove.name}</p>
+      {remove.kind==='collection'?<p>删除此分类及其子分类，文献仍保留在全部文献中。</p>:<>
+        <label className="library-delete-option"><input type="checkbox" checked={remove.deletePdf!==false} disabled={removing} onChange={event=>setRemove({...remove,deletePdf:event.target.checked})}/>同时删除 PDF</label>
+        <p>{remove.deletePdf!==false?'库内 PDF 及已保存的译文将移至系统回收站。导入前的原文件和 Markdown 笔记保留；未复制入库的文献仅移除记录。':'仅移除文献库记录，PDF、译文和笔记均保留。'}</p>
+      </>}
+      <div className="library-dialog-actions"><button className="button secondary" disabled={removing} onClick={()=>setRemove(null)}>取消</button><button className="button primary" disabled={removing} onClick={()=>void confirmRemove()}>{removing?'正在移除…':'确认移除'}</button></div>
+    </section></div>}
     {storageOpen&&<div className="modal-backdrop"><section className="library-dialog" role="dialog" aria-label="文献库存储位置"><div className="modal-title"><h2>文献库存储位置</h2><button aria-label="关闭存储位置" onClick={()=>setStorageOpen(false)}><X size={19}/></button></div><p className="library-storage-path">{data.storageRoot}</p><p>每份 PDF 和对应的中文译文放在同一子文件夹。原始导入文件保留在原位置。导入第一份文献前可更改位置。</p><div className="library-dialog-actions"><button className="button secondary" onClick={()=>void invoke('libraryFolder')}><FolderOpen size={15}/>打开文件夹</button><button className="button primary" disabled={data.documents.some(item=>item.managed)} title={data.documents.some(item=>item.managed)?'已有文献时保留当前存储位置':''} onClick={()=>void change('libraryStorage')}>选择位置</button></div></section></div>}
   </main>;
 }

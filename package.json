@@ -1,6 +1,6 @@
 {
   "name": "pdfsandwich",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "private": true,
   "description": "Windows bilingual PDF reader with synchronized annotations",
   "author": "PDFSandwich contributors",

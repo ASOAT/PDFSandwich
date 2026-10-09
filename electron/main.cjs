@@ -10,6 +10,7 @@ const { cacheKey, parseRange, validSettings, readingPosition, PageQueue } = requ
 const { TranslationWorker } = require('./translation-worker.cjs');
 const { UpdateController } = require('./updates.cjs');
 const { Library } = require('./library.cjs');
+const { removeLibraryDocuments } = require('./library-removal.cjs');
 const { createResearch } = require('./research.cjs');
 const { migrateEnglishLibrary } = require('./library-migration.cjs');
 const { TranslationFileSaver, snapshotTranslation } = require('./translation-file.cjs');
@@ -22,6 +23,7 @@ const retranslatePages = new Set();
 let settings = { provider: 'local', localEngine: 'hy', useGlossary: true, glossary: '', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', autoTranslate: true, saveTranslation: false }, apiKey = '', recent = [];
 const pending = new Map(), files = new Map(), mappingTasks = new Set();
 let history = [], future = [], generation = 0, autoPaused = false;
+let removingLibraryDocuments = false;
 let activePage = null, priorityPage = 0, wholeBookActive = false;
 const userDir = () => app.getPath('userData');
 const docDir = () => path.join(userDir(), 'documents', doc.id);
@@ -41,7 +43,7 @@ const translationSaver = new TranslationFileSaver({
     if(current===doc){persist();emit();}
   }
 });
-function scheduleTranslationSave() { if(settings.saveTranslation&&doc)translationSaver.request(); }
+function scheduleTranslationSave() { if(settings.saveTranslation&&doc&&!removingLibraryDocuments)translationSaver.request(); }
 
 function backendCommand(mode = '') {
   if (app.isPackaged) return { exe: path.join(process.resourcesPath, 'backend', 'pdfsandwich-worker.exe'), args: mode ? [mode] : [] };
@@ -120,6 +122,7 @@ function stopTranslation() {
   return stopped;
 }
 async function openDocument(file) {
+  if (removingLibraryDocuments) throw new Error('正在移除文献，请稍候。');
   if (!await mayLeave()) return null;
   if (savePromise) await savePromise;
   if (!file) { const result = await dialog.showOpenDialog(win, { title: '打开英文 PDF', filters: [{ name: 'PDF 文档', extensions: ['pdf'] }], properties: ['openFile'] }); if (result.canceled) return null; file = result.filePaths[0]; }
@@ -363,7 +366,30 @@ Object.assign(actions,{
   },
   libraryCollection:args=>{library.collection(args);return library.snapshot();},
   libraryRemoveCollection:({id})=>{library.removeCollection(id);return library.snapshot();},
-  libraryRemove:({ids})=>{library.removeDocuments(ids);return library.snapshot();},
+  libraryRemove:async args=>{
+    if(removingLibraryDocuments)throw new Error('正在移除文献，请稍候。');
+    removingLibraryDocuments=true;
+    const paths=new Map(library.data.documents.map(item=>[item.id,path.resolve(item.path).toLowerCase()]));
+    try {
+      const result=await removeLibraryDocuments(library,args,{
+        trash:file=>shell.trashItem(file),
+        beforeTrash:async item=>{
+          if(!doc||path.resolve(doc.path).toLowerCase()!==path.resolve(item.path).toLowerCase())return;
+          if(!await research.flush())throw new Error('请先保存或处理笔记编辑冲突，再移除文献。');
+          if(savePromise)await savePromise;
+          await stopTranslation();
+          await Promise.allSettled([...mappingTasks]);
+          translationSaver.cancelPending();
+          await translationSaver.flush();
+          persist();doc=null;history=[];future=[];files.clear();emit();
+        }
+      });
+      const removedPaths=new Set(result.removed.map(id=>paths.get(id)));
+      recent=recent.filter(item=>!removedPaths.has(path.resolve(item.path).toLowerCase()));
+      jsonWrite(path.join(userDir(),'recent.json'),recent);emit();
+      return result;
+    } finally {removingLibraryDocuments=false;scheduleTranslationSave();}
+  },
   libraryReveal:({id,translation})=>{const item=library.get(id);const file=translation?item.translationPath:item.path;if(file&&fs.existsSync(file))shell.showItemInFolder(file);},
   libraryRelink:async({id,sourcePath})=>{
     if(!sourcePath){const answer=await dialog.showOpenDialog(win,{title:'重新定位 PDF',filters:[{name:'PDF',extensions:['pdf']}],properties:['openFile']});if(answer.canceled)return null;sourcePath=answer.filePaths[0];}
@@ -454,9 +480,9 @@ app.whenReady().then(() => {
   app.once('will-quit', () => updates.dispose());
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', event => event.preventDefault());
-  ipcMain.handle('pdfsandwich:call', async (event, action, args) => { const primary=event.sender===win.webContents&&event.senderFrame===win.webContents.mainFrame;const secondary=research.trusted(event)&&/^(notes|research)/.test(action);if((!primary&&!secondary)||!Object.hasOwn(actions,action))throw new Error('未知操作。'); if (updates.snapshot().status === 'installing' && !['updateState', 'state', 'notesSave', 'notesGet', 'notesFlushed'].includes(action)) throw new Error('正在准备安装更新，请稍候。'); return actions[action](args || {}); });
+  ipcMain.handle('pdfsandwich:call', async (event, action, args) => { const primary=event.sender===win.webContents&&event.senderFrame===win.webContents.mainFrame;const secondary=research.trusted(event)&&/^(notes|research)/.test(action);if((!primary&&!secondary)||!Object.hasOwn(actions,action))throw new Error('未知操作。'); if (updates.snapshot().status === 'installing' && !['updateState', 'state', 'notesSave', 'notesGet', 'notesFlushed'].includes(action)) throw new Error('正在准备安装更新，请稍候。'); if(removingLibraryDocuments&&!['state','libraryState','updateState','notesSave','notesGet','notesFlushed'].includes(action)){if(['page','translate'].includes(action))return;throw new Error('正在移除文献，请稍候。');} return actions[action](args || {}); });
   if (process.env.PDFSANDWICH_DEV_URL === 'http://127.0.0.1:5173') win.loadURL(process.env.PDFSANDWICH_DEV_URL); else win.loadFile(path.join(root, 'dist', 'index.html'));
-  win.on('close', event => { if (stopping) return; event.preventDefault(); if (updates.snapshot().status === 'installing') return; research.flush().then(ok=>ok?mayLeave():false).then(async yes => { if (yes) { stopping = true; await stopTranslation(); await Promise.allSettled([...mappingTasks]); await translationSaver.flush(); worker?.kill(); win.destroy(); app.quit(); } }).catch(error => dialog.showErrorBox('保存失败', redact(error.message))); });
+  win.on('close', event => { if (stopping) return; event.preventDefault(); if (removingLibraryDocuments || updates.snapshot().status === 'installing') return; research.flush().then(ok=>ok?mayLeave():false).then(async yes => { if (yes) { stopping = true; await stopTranslation(); await Promise.allSettled([...mappingTasks]); await translationSaver.flush(); worker?.kill(); win.destroy(); app.quit(); } }).catch(error => dialog.showErrorBox('保存失败', redact(error.message))); });
   const resumeFile = path.join(userDir(), 'resume-update.json');
   const resume = readJson(resumeFile, null);
   if (fs.existsSync(resumeFile)) fs.unlinkSync(resumeFile);

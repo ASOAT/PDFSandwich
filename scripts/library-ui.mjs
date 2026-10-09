@@ -24,8 +24,8 @@ try{
  await page.getByRole('button',{name:/^计算机与机器人/}).click();await page.getByRole('button',{name:'新建分类',exact:true}).click();await page.getByRole('textbox',{name:'分类名称'}).fill('最优控制');await page.getByRole('button',{name:'保存分类'}).click();
  await page.getByRole('button',{name:/^全部文献/}).click();
  await page.getByRole('row',{name:'文献 Optimal Control Notes',exact:true}).click();
- await page.getByRole('textbox',{name:'文献年份'}).fill('2026');await page.getByRole('textbox',{name:'文献年份'}).press('Tab');
- await page.getByRole('textbox',{name:'添加标签',exact:true}).fill('待读');await page.getByRole('textbox',{name:'添加标签',exact:true}).press('Enter');
+ await page.getByRole('textbox',{name:'文献年份'}).fill('2026');await page.getByRole('textbox',{name:'文献年份'}).press('Tab');await page.waitForFunction(()=>document.querySelector('.library-table tr.selected .year-column')?.textContent==='2026');
+ await page.getByRole('textbox',{name:'添加标签',exact:true}).fill('待读');await page.getByRole('textbox',{name:'添加标签',exact:true}).press('Enter');await page.waitForFunction(()=>[...document.querySelectorAll('.library-table tr.selected .small-tag')].some(node=>node.textContent==='待读'));
  await page.getByRole('checkbox',{name:'分类 最优控制',exact:true}).click();await page.waitForFunction(()=>document.querySelector('[aria-label="分类 最优控制"]')?.checked);
  await page.getByRole('checkbox',{name:'选择全部文献'}).check();await page.getByRole('textbox',{name:'批量标签'}).fill('阅读计划');await page.getByRole('button',{name:'添加标签',exact:true}).click();
  await page.getByRole('textbox',{name:'搜索文献库'}).fill('Control 待读');await page.getByRole('row',{name:'文献 Optimal Control Notes',exact:true}).waitFor();assert.equal(await page.locator('.library-table tbody tr').count(),1);

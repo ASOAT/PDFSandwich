@@ -20,7 +20,7 @@ try {
   await page.goto(`http://127.0.0.1:${server.address().port}/`);
   await page.locator('#app-preview').evaluate(img=>img.decode());
   assert.equal(await page.title(),'PDFSandwich — 开源中英对照 PDF 阅读器与离线翻译');
-  assert.equal(await page.locator('.download').first().getAttribute('href'),'https://github.com/ASOAT/PDFSandwich/releases/download/v0.6.3/PDFSandwich-Setup-0.6.3.exe');
+  assert.equal(await page.locator('.download').first().getAttribute('href'),'https://github.com/ASOAT/PDFSandwich/releases/download/v0.6.4/PDFSandwich-Setup-0.6.4.exe');
   await page.screenshot({path:'test-results/site-desktop.png',fullPage:true});
   await page.getByRole('button',{name:'深色',exact:true}).click();
   assert.equal(await page.locator('#app-preview').getAttribute('src'),'reader-dark.png');

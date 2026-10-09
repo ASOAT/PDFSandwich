@@ -124,7 +124,9 @@ class Library {
   }
   removeDocuments(ids) {
     if (!Array.isArray(ids)) throw new Error('请选择文献。');
-    this.data.documents = this.data.documents.filter(item => !ids.includes(item.id)); this.save();
+    const previous = this.data.documents;
+    this.data.documents = previous.filter(item => !ids.includes(item.id));
+    try { this.save(); } catch (error) { this.data.documents = previous; throw error; }
   }
   relocate(id, metadata) {
     const item = this.get(id);
