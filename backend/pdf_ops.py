@@ -72,18 +72,27 @@ def read_annotation(annot, page_number):
 
 def inspect(path):
     with require_pdf(path) as doc:
+        from translation_detection import document_profile
+        profile,page_kinds=document_profile(doc)
         pages, annotations, baseline = [], [], []
         for index in range(len(doc)):
             page = doc[index]
             pages.append({"width": page.cropbox.width, "height": page.cropbox.height, "rotation": page.rotation})
+            if index in page_kinds:pages[-1]['translationKind']=page_kinds[index]
             for annot in page.annots() or []:
                 item = read_annotation(annot, index)
                 if item:
                     annotations.append(item)
                     baseline.append({"page": index, "xref": annot.xref})
         return {"id": document_id(path), "path": str(Path(path).resolve()), "name": Path(path).name,
-                "pages": pages, "outline": doc.get_toc(), "annotations": annotations,
+                "pages": pages, "translationProfile":profile,"outline": doc.get_toc(), "annotations": annotations,
                 "baseline": baseline, "stamp": stamp(path), "size": Path(path).stat().st_size}
+
+
+def page_translation_kind(path,index):
+    from translation_detection import page_kind
+    with require_pdf(path) as document:
+        return page_kind(document[index])
 
 
 def catalog(path):

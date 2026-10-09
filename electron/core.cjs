@@ -49,4 +49,9 @@ class PageQueue {
   requeue(page, explicit = false) { if (!this.items.includes(page)) this.items.push(page); if (explicit) this.explicit.add(page); }
   clear() { this.items = []; this.explicit.clear(); }
 }
-module.exports = { cacheKey, parseRange, validSettings, readingPosition, PageQueue };
+function mayTranslate(doc, index, automatic = false) {
+  const blocked = new Set(['chinese', 'needs-ocr', 'no-text']);
+  return Boolean(doc?.pages[index]) && !blocked.has(doc.pages[index].translationKind)
+    && !(automatic && blocked.has(doc.translationProfile?.kind));
+}
+module.exports = { cacheKey, parseRange, validSettings, readingPosition, PageQueue, mayTranslate };

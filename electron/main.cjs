@@ -6,7 +6,7 @@ const { spawn } = require('node:child_process');
 const { Readable } = require('node:stream');
 const readline = require('node:readline');
 const crypto = require('node:crypto');
-const { cacheKey, parseRange, validSettings, readingPosition, PageQueue } = require('./core.cjs');
+const { cacheKey, parseRange, validSettings, readingPosition, PageQueue, mayTranslate } = require('./core.cjs');
 const { TranslationWorker } = require('./translation-worker.cjs');
 const { UpdateController } = require('./updates.cjs');
 const { Library } = require('./library.cjs');
@@ -190,7 +190,7 @@ async function mapItem(id, anchor) {
 function scheduleMap(id, anchor) { const task = mapItem(id, anchor).catch(() => {}).finally(() => mappingTasks.delete(task)); mappingTasks.add(task); return task; }
 function enqueue(pages, prioritize = true, automatic = false) {
   if (!doc) return;
-  const list = [...new Set(pages)].filter(p => Number.isInteger(p) && p >= 0 && p < doc.pages.length && !['ready', 'translating', ...(automatic ? ['error'] : [])].includes(doc.translations[p]?.status));
+  const list = [...new Set(pages)].filter(p => Number.isInteger(p) && p >= 0 && p < doc.pages.length && mayTranslate(doc,p,automatic) && !['ready', 'translating', ...(automatic ? ['error'] : [])].includes(doc.translations[p]?.status));
   const dropped = queue.add(list, { automatic, prioritize });
   for (const p of dropped) if (doc.translations[p]?.status === 'queued') doc.translations[p] = { status: 'idle', progress: 0 };
   for (const p of list) doc.translations[p] = { status: 'queued', progress: 0 };
@@ -211,8 +211,12 @@ async function pump() {
   const task = { current, index, explicit, force, cancelRequested: false }; activePage = task;
   const dir = path.join(docDir(), 'translations', current.cacheVersion, String(index)); fs.mkdirSync(dir, { recursive: true });
   const input = path.join(dir, 'source.pdf'), output = path.join(dir, 'zh.pdf');
-  current.translations[index] = { status: 'translating', progress: 0, stage: '准备页面与翻译模型（首次使用需下载资源）' }; emit();
+  current.translations[index] = { status: 'translating', progress: 0, stage: '检查页面文字层' }; emit();
   try {
+    current.pages[index].translationKind ||= await python('page_translation_kind',{path:current.path,index});
+    if (version !== generation) return;
+    if (!mayTranslate(current,index,!explicit)) { delete current.translations[index]; persist(); emit(); return; }
+    current.translations[index].stage='准备页面与翻译模型（首次使用需下载资源）'; emit();
     if (settings.provider === 'api' && !apiKey && new URL(settings.baseUrl).protocol !== 'http:') throw new Error('请先配置翻译服务密钥。');
     // The input belongs to an immutable content/cache namespace. Reuse it when
     // a yielded page resumes; a warm layout engine may still hold a read handle.

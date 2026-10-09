@@ -3,6 +3,7 @@ import { TextLayer, AnnotationMode, type PDFPageProxy } from 'pdfjs-dist';
 import { Languages, LoaderCircle, MessageSquare, RotateCcw } from 'lucide-react';
 import { acquirePdf, clearPdfCache } from './pdf';
 import { selectionMarks } from './selection';
+import { translationNotice } from './translation-availability';
 import { ContextMenu, type MenuItem } from './ContextMenu';
 import { fromView, toView, transformRect, viewSize, mergeRects } from './geometry';
 import type { Document, Mark, PageInfo, Point, Rect, Side, Tool, Match } from './types';
@@ -125,7 +126,7 @@ export const Reader = forwardRef<ReaderHandle, Props>((props, ref) => {
     if(selected.length){items.push({label:'高亮选中文字',action:()=>{selection?.removeAllRanges();props.onMark(selected);}},{label:'添加下划线',action:()=>{selection?.removeAllRanges();props.onMark(selected.map(m=>({...m,kind:'underline'})));}},{label:'复制选中文字',action:()=>{void window.pdfsandwich.call('researchCopy',{text:selected.map(m=>m.selectedText||'').join('\n')});}},{label:'加入文献笔记…',action:()=>props.onExcerpt?.(selected),separator:true});}
     else if(existing)items.push({label:'编辑批注',action:()=>props.onSelectMark(existing.id)},{label:'加入文献笔记…',action:()=>props.onExcerpt?.([existing])});
     const pageNode=(event.target as Element).closest<HTMLElement>('[data-page]'),page=pageNode?Number(pageNode.dataset.page)-1:doc.currentPage;
-    items.push({label:'复制本页引用链接',separator:true,action:()=>{void window.pdfsandwich.call('researchCopy',{text:`pdfsandwich://document/${doc.libraryId}?page=${page+1}`});}},{label:'优先翻译此页',action:()=>onTranslate(page)});
+    items.push({label:'复制本页引用链接',separator:true,action:()=>{void window.pdfsandwich.call('researchCopy',{text:`pdfsandwich://document/${doc.libraryId}?page=${page+1}`});}},{label:'优先翻译此页',disabled:Boolean(translationNotice(doc,page)),action:()=>onTranslate(page)});
     setMenu({x:event.clientX,y:event.clientY,items});
   }
   const finishSelection=useRef<(event:MouseEvent)=>void>(()=>{});
@@ -148,13 +149,13 @@ export const Reader = forwardRef<ReaderHandle, Props>((props, ref) => {
     if(ignoredTop.current!==null&&Math.abs(top-Math.min(ignoredTop.current,total-height))<2){ignoredTop.current=null;return;}
     ignoredTop.current=null;const page=indexAt(top+24),fraction=(top+24-offsets[page])/(viewSize(doc.pages[page])[1]*scale+40);onPosition(page,Math.max(0,fraction));
   }}><div className="page-stack" style={{height:total,minWidth:Math.max(width,maxWidth*scale+64)}}>
-    {[...new Set([...Array.from({length:end-begin+1},(_,i)=>i+begin),...(selectionAnchor===null?[]:[selectionAnchor])])].sort((a,b)=>a-b).map(page=>{const info=doc.pages[page],translation=doc.translations[page],ready=side==='en'||translation?.status==='ready';const [w,h]=viewSize(info);return <div key={`${doc.id}-${page}`} className="page-position" style={{top:offsets[page],width:w*scale,height:h*scale,left:'50%',transform:'translateX(-50%)'}}>
+    {[...new Set([...Array.from({length:end-begin+1},(_,i)=>i+begin),...(selectionAnchor===null?[]:[selectionAnchor])])].sort((a,b)=>a-b).map(page=>{const info=doc.pages[page],translation=doc.translations[page],ready=side==='en'||translation?.status==='ready',notice=translationNotice(doc,page);const [w,h]=viewSize(info);return <div key={`${doc.id}-${page}`} className="page-position" style={{top:offsets[page],width:w*scale,height:h*scale,left:'50%',transform:'translateX(-50%)'}}>
       <div className="page-number">{page+1} <span>/ {doc.pages.length}</span></div>
       {ready?<PdfPage {...props} page={page} info={info} scale={scale} marks={props.marks.filter(m=>m.page===page)} matches={side==='en'?props.matches.filter(m=>m.page===page):[]}/>:<div className="translation-placeholder" style={{height:h*scale}}>
         <div className={`placeholder-icon ${translation?.status==='translating'?'active':''}`}>{translation?.status==='translating'?<LoaderCircle className="spin" size={25}/>:<Languages size={25}/>}</div>
-        <h3>{translation?.status==='error'?'这一页暂未译好':translation?.status==='translating'?'正在生成中文页面':translation?.status==='queued'?(page===doc.currentPage?'优先翻译当前页':'等待预取此页'):'阅读到这里，自动翻译'}</h3>
-        <p>{translation?.status==='error'?translation.error:translation?.stage||'当前阅读页优先，随后预取邻页；保留图片与公式。'}</p>
-        {translation?.status==='translating'?<><div className="progress-track"><i style={{width:`${Math.max(3,translation.progress)}%`}}/></div><small>{Math.round(translation.progress)}%</small></>:<button className="button secondary" onClick={()=>onTranslate(page)}>{translation?.status==='error'?<RotateCcw size={15}/>:<Languages size={15}/>} {translation?.status==='queued'?'优先翻译此页':translation?.status==='error'?'重试此页':'翻译此页及下一页'}</button>}
+        <h3>{notice|| (translation?.status==='error'?'这一页暂未译好':translation?.status==='translating'?'正在生成中文页面':translation?.status==='queued'?(page===doc.currentPage?'优先翻译当前页':'等待预取此页'):'阅读到这里，自动翻译')}</h3>
+        <p>{notice?(info.translationKind==='needs-ocr'?'请先为 PDF 添加 OCR 文字层，再重新打开。':'可继续阅读原文、标记和记录笔记。'):translation?.status==='error'?translation.error:translation?.stage||'当前阅读页优先，随后预取邻页；保留图片与公式。'}</p>
+        {!notice&&(translation?.status==='translating'?<><div className="progress-track"><i style={{width:`${Math.max(3,translation.progress)}%`}}/></div><small>{Math.round(translation.progress)}%</small></>:<button className="button secondary" onClick={()=>onTranslate(page)}>{translation?.status==='error'?<RotateCcw size={15}/>:<Languages size={15}/>} {translation?.status==='queued'?'优先翻译此页':translation?.status==='error'?'重试此页':'翻译此页及下一页'}</button>)}
       </div>}
     </div>;})}
   </div>{menu&&<ContextMenu {...menu} onClose={()=>setMenu(null)}/>}</div>;

@@ -12,7 +12,7 @@ _installed = False
 
 
 class LayoutTranslator:
-    name = 'pdfsandwich-v10'
+    name = 'pdfsandwich-v11'
     preserves_styles = True
     model = 'guarded-text'
     lang_in = 'en'
@@ -69,6 +69,45 @@ def install():
 
     ILTranslator.pre_translate_paragraph = prepare_styled
     from babeldoc.format.pdf.document_il.midend.typesetting import Typesetting, TypesettingUnit
+    relocate_unit = TypesettingUnit.relocate
+    update_order = Typesetting._update_paragraph_render_order
+    render_paragraph = Typesetting.render_paragraph
+    paint_context = threading.local()
+
+    def render_badge_paragraph(self, *args, **kwargs):
+        previous = getattr(paint_context, 'backgrounds', None)
+        paint_context.backgrounds = {}
+        try:
+            return render_paragraph(self, *args, **kwargs)
+        finally:
+            paint_context.backgrounds = previous
+
+    def relocate_badges(self, *args, **kwargs):
+        relocated = relocate_unit(self, *args, **kwargs)
+        backgrounds = getattr(paint_context, 'backgrounds', None)
+        if backgrounds is not None and self.formular and relocated.formular:
+            for source, target in zip(self.formular.pdf_character, relocated.formular.pdf_character):
+                if source.formula_layout_id is not None and source.formula_layout_id <= -300000:
+                    # Upstream rebuilds glyphs during relocation, then resets
+                    # their order to the paragraph's. Keep the background linked
+                    # until that reset, so it cannot cover the white digit.
+                    backgrounds[id(target)] = relocated.formular.pdf_curve
+                    break
+        return relocated
+
+    def update_badge_order(self, paragraph):
+        update_order(self, paragraph)
+        for comp in paragraph.pdf_paragraph_composition:
+            char = comp.pdf_character
+            if char and char.render_order is not None and char.sub_render_order is not None:
+                for curve in (getattr(paint_context, 'backgrounds', None) or {}).get(id(char), []):
+                    # Curves have only a main drawing order in the pinned IL.
+                    # Draw the background just before this paragraph's glyphs.
+                    curve.render_order = char.render_order - 1
+
+    TypesettingUnit.relocate = relocate_badges
+    Typesetting._update_paragraph_render_order = update_badge_order
+    Typesetting.render_paragraph = render_badge_paragraph
     word_width = Typesetting._get_width_before_next_break_point
 
     def remaining_word_width(self, units, scale):

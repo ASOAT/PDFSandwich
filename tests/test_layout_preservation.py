@@ -242,3 +242,59 @@ def test_fragmented_prose_rejoins_broken_words_without_merging_columns_or_headin
     # Similar single-line cells are insufficient evidence of a broken paragraph.
     cells=[paragraph(line('data',x=40,y=100)),paragraph(line('table',x=60,y=100))]
     p=Page(pdf_paragraph=cells);join_fragmented_prose(p);assert len(p.pdf_paragraph)==2
+
+
+def test_badge_background_is_collected_relocated_and_drawn_before_white_digit():
+    import copy
+    from types import SimpleNamespace
+    from babeldoc.format.pdf.document_il.il_version_1 import PdfFormula, PdfCurve, GraphicState
+    from babeldoc.format.pdf.document_il.utils.formular_helper import update_formula_data
+    from babeldoc.format.pdf.document_il.midend.typesetting import Typesetting, TypesettingUnit
+    from babeldoc.format.pdf.document_il.midend.styles_and_formulas import StylesAndFormulas
+    from layout_atoms import protect_inline_badges
+    from layout_runtime import install
+    install()
+    digit=line('1',x=44,y=302).pdf_character[0]
+    digit.box=Box(44,302,49,309);digit.visual_bbox=VisualBbox(box=copy.copy(digit.box))
+    digit.pdf_style.graphic_state=GraphicState(passthrough_per_char_instruction='1 g')
+    digit.render_order=101
+    curve=PdfCurve(box=Box(40,300,52,312),fill_background=True,render_order=100,xobj_id=0)
+    p=paragraph(PdfLine(box=digit.box,pdf_character=[digit]))
+    page=Page(pdf_paragraph=[p],pdf_curve=[curve]);protect_inline_badges(page)
+    assert digit.box==Box(44,302,49,309) and digit.visual_bbox.box==curve.box
+    assert digit.formula_layout_id<=-300000
+    space=line(' ',x=52,y=302).pdf_character[0]
+    atom=PdfFormula(pdf_character=[digit,space],x_offset=0,y_offset=0)
+    update_formula_data(atom)
+    p.pdf_paragraph_composition=[PdfParagraphComposition(pdf_formula=atom)]
+    classifier=StylesAndFormulas.__new__(StylesAndFormulas)
+    assert not classifier.is_translatable_formula(atom)
+    classifier.collect_contained_elements(page)
+    assert atom.pdf_curve==[curve] and not page.pdf_curve
+    typesetter=Typesetting.__new__(Typesetting)
+    typesetter.create_typesetting_units=lambda *_:[SimpleNamespace(can_passthrough=False)]
+    def layout(paragraph,page,units,scale):
+        moved=TypesettingUnit(formular=atom).relocate(100,200,.8)
+        chars,curves,forms=moved.render()
+        paragraph.pdf_paragraph_composition=[PdfParagraphComposition(pdf_character=c) for c in chars]
+        page.pdf_curve.extend(curves)
+    typesetter.retypeset_with_precomputed_scale=layout
+    p.render_order=20
+    typesetter.render_paragraph(p,page,{})
+    new=p.pdf_paragraph_composition[0].pdf_character;background=page.pdf_curve[0]
+    assert new.pdf_style.graphic_state.passthrough_per_char_instruction=='1 g'
+    assert background.render_order<new.render_order==20
+    assert abs((new.box.x-background.box.x)-(44-40)*.8)<1e-6
+    assert abs((new.box.y-background.box.y)-(302-300)*.8)<1e-6
+
+
+def test_actual_body_graphics_state_is_base_without_erasing_colored_references():
+    from babeldoc.format.pdf.document_il.il_version_1 import PdfSameStyleCharacters, GraphicState
+    from layout_preservation import use_dominant_prose_style
+    body=PdfStyle(font_id='text',font_size=10,graphic_state=GraphicState(passthrough_per_char_instruction='/Cs6 cs 0 0 1 scn 0 g'))
+    blue=PdfStyle(font_id='text',font_size=10,graphic_state=GraphicState(passthrough_per_char_instruction='0 0 1 rg'))
+    p=paragraph(line('dummy'))
+    p.pdf_paragraph_composition=[PdfParagraphComposition(pdf_same_style_characters=PdfSameStyleCharacters(pdf_style=style,pdf_character=line(text).pdf_character)) for text,style in [('Some black scientific prose with math',body),('Fig.',blue)]]
+    use_dominant_prose_style(Page(pdf_paragraph=[p]))
+    assert p.pdf_style==body and p.pdf_style is not body
+    assert p.pdf_paragraph_composition[1].pdf_same_style_characters.pdf_style==blue

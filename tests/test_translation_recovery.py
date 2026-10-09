@@ -177,3 +177,39 @@ def test_citation_punctuation_in_separate_color_runs_preserves_metadata(tmp_path
         output=engine.translate(source)
         assert visible(output).startswith('et al., 2024, Lemma 5.13).') and '方法有效' in output
     finally:engine.close()
+
+
+def test_colored_reference_labels_and_numbers_are_one_literal(tmp_path):
+    import re
+    from translation_structure import visible
+    engine=engine_at(tmp_path);calls=[]
+    engine.generate=lambda text:(calls.append(text) or text.replace('See ', '参见').replace(' and ', '及'))
+    try:
+        source="See Fig. <style id='7'>5</style> and Listing <style id='9'>2</style>."
+        result=engine.translate(source)
+        assert visible(result)=='参见图 5及代码清单 2.'
+        assert "<style id='7'>5</style>" in result
+        assert "<style id='9'>2</style>" in result
+        assert all('Fig' not in x and 'Listing' not in x and '<style' not in x for x in calls)
+        assert re.findall(r'\d+',visible(result))==['5','2']
+        result=engine.translate("See <style id='3'>e.g.</style> and Eq. 10.")
+        assert visible(result)=='参见例如及式 10.'
+        source='See (Smith, 2024, Section 2).'
+        assert visible(engine.translate(source))=='参见(Smith, 2024, Section 2).'
+    finally:engine.close()
+
+
+def test_failed_paragraph_retries_sentences_with_formula_context(tmp_path):
+    engine=engine_at(tmp_path);calls=[]
+    def generate(source):
+        calls.append(source)
+        if 'Another' in source and 'The matrix' in source:return '省略了公式的段落'
+        if source.startswith('The matrix'):return '矩阵 {v1} 用于计算。'
+        return '另一个矩阵 {v2} 也可使用。'
+    engine.generate=generate
+    try:
+        result=engine.translate('The matrix {v1} is used. Another matrix {v2} also works.')
+        assert result=='矩阵 {v1} 用于计算。 另一个矩阵 {v2} 也可使用。'
+        assert len(calls)==3 and all('{v' in part for part in calls)
+        assert not engine.warnings
+    finally:engine.close()

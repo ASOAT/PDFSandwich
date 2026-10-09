@@ -3,6 +3,40 @@ import copy
 import re
 
 
+def protect_inline_badges(page):
+    """Keep a compact numbered badge and its vector background in one atom.
+
+    A white digit can look like ordinary prose to the style classifier. Its
+    circle then stays at the source coordinate while the digit reflows away.
+    Enlarging the visual bounds (not the glyph's drawing coordinates) lets
+    upstream collect the whole background and reserve its width/height.
+    """
+    from babeldoc.format.pdf.document_il.il_version_1 import Box, VisualBbox
+    from layout_preservation import characters
+    paragraphs=[(p,list(characters(p))) for p in page.pdf_paragraph
+                if p.layout_label not in ('formula','figure','table')]
+    for index,curve in enumerate(page.pdf_curve):
+        b=curve.box
+        if not b or not curve.fill_background or not 3<b.x2-b.x<30 or not 3<b.y2-b.y<30:
+            continue
+        if not .65<(b.x2-b.x)/(b.y2-b.y)<1.55:continue
+        matches=[]
+        for paragraph,chars in paragraphs:
+            inside=[c for c in chars if (c.char_unicode or '').strip() and c.xobj_id==curve.xobj_id
+                    and b.x<=visual(c).x and b.x2>=visual(c).x2 and b.y<=visual(c).y and b.y2>=visual(c).y2]
+            label=''.join(c.char_unicode or '' for c in inside)
+            if not re.fullmatch(r'\d{1,2}|[A-Za-z]',label):continue
+            size=max(c.pdf_style.font_size for c in inside)
+            if not .65*size<b.y2-b.y<1.6*size:continue
+            if any(c.render_order is not None and curve.render_order is not None and c.render_order<curve.render_order for c in inside):continue
+            matches.append(inside)
+        if len(matches)!=1:continue
+        for char in matches[0]:
+            char.formula_layout_id=-300000-index
+            a=visual(char)
+            char.visual_bbox=VisualBbox(box=Box(min(a.x,b.x),min(a.y,b.y),max(a.x2,b.x2),max(a.y2,b.y2)))
+
+
 def split_numbered_lists(page):
     from layout_preservation import union_box
     from reference_layout import explicit_word_spaces

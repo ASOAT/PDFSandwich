@@ -1,6 +1,18 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { parseRange, cacheKey, validSettings, readingPosition, PageQueue } = require('../electron/core.cjs');
+test('Chinese and OCR documents never enter automatic translation; mixed English pages remain readable',()=>{
+  const {mayTranslate}=require('../electron/core.cjs');
+  for(const kind of ['chinese','needs-ocr','no-text']) {
+    const doc={translationProfile:{kind},pages:[{}, {translationKind:kind}, {translationKind:'english'}]};
+    assert.equal(mayTranslate(doc,0,true),false);
+    assert.equal(mayTranslate(doc,1,false),false);
+    assert.equal(mayTranslate(doc,2,true),false);
+    assert.equal(mayTranslate(doc,2,false),true);
+  }
+  assert.equal(mayTranslate({translationProfile:{kind:'english'},pages:[{translationKind:'needs-ocr'},{}]},0,true),false);
+  assert.equal(mayTranslate({translationProfile:{kind:'english'},pages:[{}]},0,true),true);
+});
 test('range transport handles partial, suffix, clipped end and invalid ranges',()=>{
   assert.deepEqual(parseRange('bytes=10-19',100),{start:10,end:19,partial:true});
   assert.deepEqual(parseRange('bytes=-10',100),{start:90,end:99,partial:true});

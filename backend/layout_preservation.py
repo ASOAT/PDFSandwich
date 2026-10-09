@@ -30,6 +30,29 @@ def union_box(chars):
                max(b.x2 for b in boxes), max(b.y2 for b in boxes))
 
 
+def use_dominant_prose_style(page):
+    """Use the actual body style, including its PDF graphics state, as base.
+
+    A synthetic black base can differ from visually black source runs. That
+    would wrap every prose fragment between formulas in its own style token,
+    translating incomplete clauses instead of a sentence.
+    """
+    for paragraph in page.pdf_paragraph:
+        counts=Counter();styles={}
+        for comp in paragraph.pdf_paragraph_composition:
+            run=comp.pdf_same_style_characters
+            if not run or not run.pdf_style:continue
+            style=run.pdf_style
+            state=style.graphic_state.passthrough_per_char_instruction if style.graphic_state else None
+            key=(style.font_id,style.font_size,state)
+            counts[key]+=sum(len(re.findall(r'[A-Za-z]',c.char_unicode or '')) for c in run.pdf_character)
+            styles[key]=style
+        if counts:
+            key,count=counts.most_common(1)[0]
+            if count and count>=sum(counts.values())*.6:
+                paragraph.pdf_style=copy.deepcopy(styles[key])
+
+
 def math_fonts(page):
     fonts = {f.font_id: f.name.split('+')[-1] for f in page.pdf_font}
     hard = {key for key, name in fonts.items() if MATH_FONT.search(name)}
@@ -225,12 +248,18 @@ def install():
     original_page = StylesAndFormulas.process_page
     original_classify = StylesAndFormulas._classify_characters_in_composition
     original_merge = StylesAndFormulas.merge_overlapping_formulas
+    original_translatable = StylesAndFormulas.is_translatable_formula
+
+    def translatable(self, formula):
+        if any(c.formula_layout_id is not None and c.formula_layout_id<=-300000 for c in formula.pdf_character):
+            return False
+        return original_translatable(self, formula)
 
     def process_page(self, page):
         self._sandwich_fonts = math_fonts(page)
         self._sandwich_formula_id = -10000
-        from reference_layout import split_references
-        from layout_atoms import split_numbered_lists
+        from reference_layout import split_references, explicit_word_spaces
+        from layout_atoms import split_numbered_lists, protect_inline_badges
         from prose_layout import join_fragmented_prose, join_fragmented_titles, preserve_author_rows
         join_fragmented_titles(page)
         join_fragmented_prose(page)
@@ -239,7 +268,16 @@ def install():
         split_numbered_lists(page)
         preserve_algorithms(page, *self._sandwich_fonts)
         protect_heading_number(page)
-        return original_page(self, page)
+        # Materialize position-only word gaps before color/font runs split
+        # references such as "Fig. 5 depicts" or "Listing 2 reports".
+        for paragraph in page.pdf_paragraph:
+            for comp in paragraph.pdf_paragraph_composition:
+                if comp.pdf_line:
+                    comp.pdf_line.pdf_character=explicit_word_spaces(comp.pdf_line.pdf_character)
+        protect_inline_badges(page)
+        result=original_page(self, page)
+        use_dominant_prose_style(page)
+        return result
 
     def merge(self, page):
         original_merge(self, page)
@@ -261,7 +299,8 @@ def install():
             while end < len(chars) and flags[end] == flags[start]:
                 end += 1
             value = ''.join(c.char_unicode or ' ' for c in chars[start:end])
-            if flags[start] and not re.fullmatch(r'[\d\s.,]+', value):
+            if flags[start] and (not re.fullmatch(r'[\d\s.,]+', value)
+                                 or any(c.formula_layout_id for c in chars[start:end])):
                 protected.update(range(start, end))
             start = end
         for index, ((char, _, corner), flag) in enumerate(zip(tagged, flags)):
@@ -279,4 +318,5 @@ def install():
     StylesAndFormulas.process_page = process_page
     StylesAndFormulas.merge_overlapping_formulas = merge
     StylesAndFormulas._classify_characters_in_composition = classify
+    StylesAndFormulas.is_translatable_formula = translatable
     _installed = True
