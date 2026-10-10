@@ -62,7 +62,15 @@ def split_numbered_lists(page):
         for n,(begin,end,_,_) in enumerate(markers):
             stop=markers[n+1][0] if n+1<len(markers) else len(compositions)
             entry=copy.copy(paragraph)
-            entry.pdf_paragraph_composition=copy.deepcopy(compositions[begin:stop])
+            # Items partition the original glyphs without duplicating them.
+            # Clone the containers we edit, not the glyphs' potentially deep
+            # lazy graphics-state history from the native PDF parser.
+            entry.pdf_paragraph_composition=[]
+            for original in compositions[begin:stop]:
+                comp=copy.copy(original)
+                comp.pdf_line=copy.copy(original.pdf_line)
+                comp.pdf_line.pdf_character=list(original.pdf_line.pdf_character)
+                entry.pdf_paragraph_composition.append(comp)
             first=entry.pdf_paragraph_composition[0].pdf_line
             page.pdf_character.extend(first.pdf_character[:end])
             first.pdf_character=first.pdf_character[end:]

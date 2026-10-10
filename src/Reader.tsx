@@ -9,7 +9,7 @@ import { fromView, toView, transformRect, viewSize, mergeRects } from './geometr
 import type { Document, Mark, PageInfo, Point, Rect, Side, Tool, Match } from './types';
 
 export type ReaderHandle = { go: (page: number, fraction?: number) => void; captureZoomAnchor: (x?: number, y?: number) => void };
-type Props = { doc: Document; side: Side; theme: 'light' | 'dark'; zoom: number; tool: Tool; color: string; marks: Mark[]; matches: Match[]; onPosition: (page: number, fraction: number) => void; onWheelZoom: (factor: number, x: number, y: number) => void; onMark: (mark: Mark | Mark[]) => void; onSelectMark: (id: string) => void; onTranslate: (page: number) => void; onError: (message: string) => void; onExcerpt?:(marks:Mark[])=>void;onCapture?:(side:Side,page:number,rect:Rect,formula:boolean)=>void };
+type Props = { doc: Document; side: Side; paired?: boolean; theme: 'light' | 'dark'; zoom: number; tool: Tool; color: string; marks: Mark[]; matches: Match[]; onPosition: (page: number, fraction: number) => void; onWheelZoom: (factor: number, x: number, y: number) => void; onMark: (mark: Mark | Mark[]) => void; onSelectMark: (id: string) => void; onTranslate: (page: number) => void; onError: (message: string) => void; onExcerpt?:(marks:Mark[])=>void;onCapture?:(side:Side,page:number,rect:Rect,formula:boolean)=>void };
 
 function PdfPage({ doc, side, theme, page: index, scale, info, tool, color, marks, matches, onMark, onSelectMark, onError, onCapture }: Omit<Props,'zoom'|'onPosition'|'onTranslate'> & { page: number; scale: number; info: PageInfo }) {
   const canvas = useRef<HTMLCanvasElement>(null), text = useRef<HTMLDivElement>(null), surface = useRef<HTMLDivElement>(null);
@@ -66,6 +66,7 @@ function PdfPage({ doc, side, theme, page: index, scale, info, tool, color, mark
 
 export const Reader = forwardRef<ReaderHandle, Props>((props, ref) => {
   const { doc, side, zoom, onPosition, onTranslate } = props;
+  const alignment=props.paired?(side==='en'?'end':'start'):'center';
   const viewport = useRef<HTMLDivElement>(null), ignoredTop=useRef<number|null>(null), restored=useRef('');
   const [width,setWidth]=useState(0),[scrollTop,setScrollTop]=useState(0),[height,setHeight]=useState(800);
   const maxWidth = useMemo(()=>Math.max(...doc.pages.map(p=>viewSize(p)[0])),[doc.sourceUrl]);
@@ -73,14 +74,21 @@ export const Reader = forwardRef<ReaderHandle, Props>((props, ref) => {
   const offsets=useMemo(()=>{let top=24;return doc.pages.map(info=>{const value=top;top+=viewSize(info)[1]*scale+40;return value;});},[doc.sourceUrl,scale]);
   const total=offsets.at(-1)!+viewSize(doc.pages.at(-1)!)[1]*scale+40;
   function indexAt(top:number, positions=offsets) { let low=0,high=positions.length-1;while(low<high){const mid=Math.ceil((low+high)/2);if(positions[mid]<=top)low=mid;else high=mid-1;}return low; }
-  const layout=useRef({scale,width,offsets,id:doc.sourceUrl});
+  // Leave spare space outside a bilingual spread, keeping its inner gutter
+  // constant even when the pages are smaller than their scroll viewports.
+  function pageLeft(page:number,viewWidth:number,viewScale:number,align=alignment) {
+    const stackWidth=Math.max(viewWidth,maxWidth*viewScale+64);
+    const pageWidth=viewSize(doc.pages[page])[0]*viewScale;
+    return align==='start'?12:align==='end'?stackWidth-pageWidth-12:(stackWidth-pageWidth)/2;
+  }
+  const layout=useRef({scale,width,offsets,alignment,id:doc.sourceUrl});
   const zoomAnchor=useRef<{page:number;localX:number;localY:number;x:number;y:number}|null>(null);
   function captureZoomAnchor(x=.5,y=.5,previous=layout.current){
     const node=viewport.current;if(!node)return;
     const px=node.clientWidth*x,py=node.clientHeight*y;
     const page=indexAt(node.scrollTop+py,previous.offsets);
-    const pageLeft=(Math.max(previous.width,maxWidth*previous.scale+64)-viewSize(doc.pages[page])[0]*previous.scale)/2;
-    zoomAnchor.current={page,localX:(node.scrollLeft+px-pageLeft)/previous.scale,localY:(node.scrollTop+py-previous.offsets[page])/previous.scale,x:px,y:py};
+    const left=pageLeft(page,previous.width,previous.scale,previous.alignment);
+    zoomAnchor.current={page,localX:(node.scrollLeft+px-left)/previous.scale,localY:(node.scrollTop+py-previous.offsets[page])/previous.scale,x:px,y:py};
   }
   const go=(page:number,fraction=0)=>{if(!viewport.current)return;page=Math.max(0,Math.min(doc.pages.length-1,page));const top=Math.max(0,offsets[page]+fraction*(viewSize(doc.pages[page])[1]*scale+40)-24);viewport.current.scrollTop=top;ignoredTop.current=viewport.current.scrollTop;setScrollTop(viewport.current.scrollTop);};
   useImperativeHandle(ref,()=>({go,captureZoomAnchor}));
@@ -89,17 +97,17 @@ export const Reader = forwardRef<ReaderHandle, Props>((props, ref) => {
     const previous=layout.current,node=viewport.current;
     if(node&&width>0&&restored.current!==doc.sourceUrl){
       restored.current=doc.sourceUrl;node.scrollLeft=0;go(doc.currentPage,doc.currentFraction);clearPdfCache();
-    }else if(node&&previous.width>0&&previous.id===doc.sourceUrl&&previous.scale!==scale){
+    }else if(node&&previous.width>0&&previous.id===doc.sourceUrl&&(previous.scale!==scale||previous.alignment!==alignment)){
       if(!zoomAnchor.current)captureZoomAnchor(.5,.5,previous);
       const anchor=zoomAnchor.current!;
-      const pageLeft=(Math.max(width,maxWidth*scale+64)-viewSize(doc.pages[anchor.page])[0]*scale)/2;
+      const left=pageLeft(anchor.page,width,scale);
       ignoredTop.current=null;
       node.scrollTop=offsets[anchor.page]+anchor.localY*scale-anchor.y;
-      node.scrollLeft=pageLeft+anchor.localX*scale-anchor.x;
+      node.scrollLeft=left+anchor.localX*scale-anchor.x;
       setScrollTop(node.scrollTop);
     }
-    zoomAnchor.current=null;layout.current={scale,width,offsets,id:doc.sourceUrl};
-  },[scale,width,doc.sourceUrl]);
+    zoomAnchor.current=null;layout.current={scale,width,offsets,alignment,id:doc.sourceUrl};
+  },[scale,width,alignment,doc.sourceUrl]);
   // React's delegated wheel listener is passive in Chromium. A local non-passive
   // listener is required to prevent the browser from zooming the entire UI.
   const wheelCallback=useRef(props.onWheelZoom);wheelCallback.current=props.onWheelZoom;
@@ -149,7 +157,7 @@ export const Reader = forwardRef<ReaderHandle, Props>((props, ref) => {
     if(ignoredTop.current!==null&&Math.abs(top-Math.min(ignoredTop.current,total-height))<2){ignoredTop.current=null;return;}
     ignoredTop.current=null;const page=indexAt(top+24),fraction=(top+24-offsets[page])/(viewSize(doc.pages[page])[1]*scale+40);onPosition(page,Math.max(0,fraction));
   }}><div className="page-stack" style={{height:total,minWidth:Math.max(width,maxWidth*scale+64)}}>
-    {[...new Set([...Array.from({length:end-begin+1},(_,i)=>i+begin),...(selectionAnchor===null?[]:[selectionAnchor])])].sort((a,b)=>a-b).map(page=>{const info=doc.pages[page],translation=doc.translations[page],ready=side==='en'||translation?.status==='ready',notice=translationNotice(doc,page);const [w,h]=viewSize(info);return <div key={`${doc.id}-${page}`} className="page-position" style={{top:offsets[page],width:w*scale,height:h*scale,left:'50%',transform:'translateX(-50%)'}}>
+    {[...new Set([...Array.from({length:end-begin+1},(_,i)=>i+begin),...(selectionAnchor===null?[]:[selectionAnchor])])].sort((a,b)=>a-b).map(page=>{const info=doc.pages[page],translation=doc.translations[page],ready=side==='en'||translation?.status==='ready',notice=translationNotice(doc,page);const [w,h]=viewSize(info);return <div key={`${doc.id}-${page}`} className="page-position" style={{top:offsets[page],width:w*scale,height:h*scale,left:pageLeft(page,width,scale)}}>
       <div className="page-number">{page+1} <span>/ {doc.pages.length}</span></div>
       {ready?<PdfPage {...props} page={page} info={info} scale={scale} marks={props.marks.filter(m=>m.page===page)} matches={side==='en'?props.matches.filter(m=>m.page===page):[]}/>:<div className="translation-placeholder" style={{height:h*scale}}>
         <div className={`placeholder-icon ${translation?.status==='translating'?'active':''}`}>{translation?.status==='translating'?<LoaderCircle className="spin" size={25}/>:<Languages size={25}/>}</div>

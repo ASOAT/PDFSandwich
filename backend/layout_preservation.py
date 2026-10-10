@@ -50,7 +50,16 @@ def use_dominant_prose_style(page):
         if counts:
             key,count=counts.most_common(1)[0]
             if count and count>=sum(counts.values())*.6:
-                paragraph.pdf_style=copy.deepcopy(styles[key])
+                # Native-parser states can contain a lazy linked history of
+                # thousands of PDF operators. Deepcopy follows that history
+                # recursively; retain only the rendered instruction value.
+                style=copy.copy(styles[key])
+                if style.graphic_state is not None:
+                    style.graphic_state=copy.copy(style.graphic_state)
+                    instruction=style.graphic_state.passthrough_per_char_instruction
+                    if instruction is not None:
+                        style.graphic_state.passthrough_per_char_instruction=str(instruction)
+                paragraph.pdf_style=style
 
 
 def math_fonts(page):

@@ -142,7 +142,7 @@ def install():
                 char.pdf_style = copy.copy(char.pdf_style)
                 char.pdf_style.graphic_state = copy.copy(char.pdf_style.graphic_state)
                 state = char.pdf_style.graphic_state
-                state.passthrough_per_char_instruction = (state.passthrough_per_char_instruction or '') + f' 1 0 0.212557 1 {-0.212557*char.box.y:.6f} 0 cm'
+                state.passthrough_per_char_instruction = str(state.passthrough_per_char_instruction or '') + f' 1 0 0.212557 1 {-0.212557*char.box.y:.6f} 0 cm'
         return result
 
     TypesettingUnit.render = render_styled

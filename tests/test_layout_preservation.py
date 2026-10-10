@@ -298,3 +298,68 @@ def test_actual_body_graphics_state_is_base_without_erasing_colored_references()
     use_dominant_prose_style(Page(pdf_paragraph=[p]))
     assert p.pdf_style==body and p.pdf_style is not body
     assert p.pdf_paragraph_composition[1].pdf_same_style_characters.pdf_style==blue
+
+
+def deep_lazy_graphics_instruction():
+    from babeldoc.format.pdf.document_il.frontend.il_creater_active_support import (
+        EMPTY_PASSTHROUGH_SNAPSHOT, LazyPassthroughInstruction,
+        replace_first_passthrough_operator)
+    snapshot=EMPTY_PASSTHROUGH_SNAPSHOT
+    for index in range(2000):
+        snapshot=replace_first_passthrough_operator(snapshot,'rg',('rg','0 0 1' if index%2 else '0 0 0'))
+    return LazyPassthroughInstruction(snapshot,suffix_parts=('1 Tr',))
+
+
+def test_dominant_style_handles_deep_native_graphics_history_and_detaches_value():
+    from babeldoc.format.pdf.document_il.il_version_1 import PdfSameStyleCharacters, GraphicState
+    from layout_preservation import use_dominant_prose_style
+    instruction=deep_lazy_graphics_instruction()
+    body=PdfStyle(font_id='text',font_size=10,graphic_state=GraphicState(passthrough_per_char_instruction=instruction))
+    p=paragraph(line('Body text remains readable.'))
+    p.pdf_paragraph_composition=[PdfParagraphComposition(pdf_same_style_characters=PdfSameStyleCharacters(
+        pdf_style=body,pdf_character=line('Body text remains readable.').pdf_character))]
+    use_dominant_prose_style(Page(pdf_paragraph=[p]))
+    assert p.pdf_style is not body
+    assert p.pdf_style.graphic_state is not body.graphic_state
+    assert type(p.pdf_style.graphic_state.passthrough_per_char_instruction) is str
+    assert p.pdf_style.graphic_state.passthrough_per_char_instruction==str(instruction)
+    p.pdf_style.graphic_state.passthrough_per_char_instruction='0 g'
+    assert body.graphic_state.passthrough_per_char_instruction is instruction
+    assert str(instruction).endswith('1 Tr') and '0 0 1 rg' in str(instruction)
+
+
+def test_numbered_list_splits_deep_graphics_history_without_cloning_glyphs():
+    from babeldoc.format.pdf.document_il.il_version_1 import GraphicState
+    from layout_atoms import split_numbered_lists
+    p=paragraph(line('1. First list item.',y=300),line('2. Second list item.',y=270))
+    originals=list(p.pdf_paragraph_composition)
+    chars=[c for comp in originals for c in comp.pdf_line.pdf_character]
+    instruction=deep_lazy_graphics_instruction()
+    for char in chars:
+        char.pdf_style.graphic_state=GraphicState(passthrough_per_char_instruction=instruction)
+    page=Page(pdf_paragraph=[p]);split_numbered_lists(page)
+    assert [entry.unicode for entry in page.pdf_paragraph]==['First list item.','Second list item.']
+    retained=page.pdf_character+[c for entry in page.pdf_paragraph for comp in entry.pdf_paragraph_composition for c in comp.pdf_line.pdf_character]
+    assert len(retained)==len(chars)
+    assert {id(c) for c in retained}=={id(c) for c in chars}
+    for entry,original in zip(page.pdf_paragraph,originals):
+        assert entry.pdf_paragraph_composition[0] is not original
+        assert entry.pdf_paragraph_composition[0].pdf_line is not original.pdf_line
+        assert original.pdf_line.pdf_character[0].char_unicode in '12'
+
+
+def test_italic_translation_materializes_lazy_graphics_before_adding_shear():
+    import pymupdf
+    from babeldoc.format.pdf.document_il.il_version_1 import GraphicState
+    from babeldoc.format.pdf.document_il.midend.typesetting import TypesettingUnit
+    from layout_runtime import install
+    install()
+    instruction=deep_lazy_graphics_instruction()
+    style=PdfStyle(font_id='text',font_size=10,graphic_state=GraphicState(passthrough_per_char_instruction=instruction))
+    unit=TypesettingUnit(unicode='字',font=pymupdf.Font('china-s'),original_font=PdfFont(italic=True),
+                        font_size=10,style=style,xobj_id=0).relocate(40,100,1)
+    chars,_,_=unit.render()
+    assert len(chars)==1
+    commands=chars[0].pdf_style.graphic_state.passthrough_per_char_instruction
+    assert commands.startswith(str(instruction)) and '0.212557' in commands and commands.endswith(' cm')
+    assert style.graphic_state.passthrough_per_char_instruction is instruction

@@ -2,7 +2,8 @@ import {_electron as electron} from 'playwright';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 const executable=process.env.PDFSANDWICH_TEST_EXE;
-const app=await electron.launch({...(executable?{executablePath:path.resolve(executable)}:{args:['.']}),cwd:process.cwd(),env:{...process.env,PDFSANDWICH_DATA_DIR:path.resolve('local-data/zoom-test')},timeout:60000});
+const profile=await fs.mkdtemp(path.resolve('local-data/zoom-test-'));
+const app=await electron.launch({...(executable?{executablePath:path.resolve(executable)}:{args:['.']}),cwd:process.cwd(),env:{...process.env,PDFSANDWICH_DATA_DIR:profile},timeout:60000});
 try{
   const page=await app.firstWindow();page.setDefaultTimeout(30000);const errors=[];
   page.on('pageerror',error=>errors.push(error.message));
@@ -37,7 +38,40 @@ try{
   const browserZoom=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].webContents.getZoomFactor());
   if(header.height!==afterHeader.height||browserZoom!==1)throw new Error('Whole application was magnified');
   await page.screenshot({path:`test-results/ctrl-wheel${executable?'-packaged':''}.png`});
+  const gutters=[];
+  async function pageFour(){
+    await page.getByRole('textbox',{name:'当前页码'}).fill('4');await page.getByRole('textbox',{name:'当前页码'}).press('Enter');
+    await page.waitForFunction(()=>Boolean(document.querySelector('[data-side="en"][data-page="4"] .textLayer span')));
+  }
+  await page.keyboard.press('Control+0');
+  for(const target of [50,70,100]){
+    await page.keyboard.press('Control+0');
+    for(let i=100;i>target;i-=10)await page.keyboard.press('Control+-');
+    await page.waitForFunction(value=>document.querySelector('.zoom-value').textContent===(value===100?'适合页宽':`${value}%`),target);
+    await pageFour();
+    const gap=await page.evaluate(()=>{
+      const find=side=>document.querySelector(`[data-reader="${side}"] .page-position:has([data-page="4"])`) || [...document.querySelectorAll(`[data-reader="${side}"] .page-position`)].find(p=>p.querySelector('.page-number')?.textContent.trim().startsWith('4 '));
+      const left=find('en').getBoundingClientRect(),right=find('zh').getBoundingClientRect();
+      return right.left-left.right;
+    });
+    if(gap<20||gap>36)throw new Error(`Unexpected center gap at ${target}%: ${gap}`);
+    gutters.push({zoom:target,gap});
+    if(target===50)await page.screenshot({path:'test-results/paired-50.png'});
+  }
+  if(Math.max(...gutters.map(x=>x.gap))-Math.min(...gutters.map(x=>x.gap))>2)throw new Error('Center gap grows when zooming out');
+  await page.getByRole('button',{name:'PDF 与笔记',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelectorAll('[data-reader]').length===1);
+  await page.keyboard.press('Control+-');await page.keyboard.press('Control+-');
+  await pageFour();
+  const noteCenterError=await page.evaluate(()=>{
+    const viewport=document.querySelector('[data-reader="en"]');
+    const surface=viewport.querySelector('[data-page="4"]').getBoundingClientRect();
+    return Math.abs((surface.left+surface.right)/2-(viewport.getBoundingClientRect().left+viewport.clientWidth/2));
+  });
+  if(noteCenterError>2)throw new Error(`Single PDF notes view is not centered: ${noteCenterError}`);
+  await page.getByRole('button',{name:'双栏原文译文',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelectorAll('[data-reader]').length===2);
   if(errors.length)throw new Error(errors.join('; '));
-  const report={packaged:Boolean(executable),leftZoomIn:true,rightZoomOut:true,normalScroll:true,pointerAnchorError:anchorError,horizontalAnchorError,browserZoom,errors};
+  const report={packaged:Boolean(executable),leftZoomIn:true,rightZoomOut:true,normalScroll:true,gutters,noteCenterError,pointerAnchorError:anchorError,horizontalAnchorError,browserZoom,errors};
   await fs.writeFile(`test-results/ctrl-wheel${executable?'-packaged':''}.json`,JSON.stringify(report,null,2));console.log(JSON.stringify(report));
 }catch(error){const p=await app.firstWindow();console.log(await p.evaluate(async()=>({state:await window.pdfsandwich.call('state'),readers:[...document.querySelectorAll('[data-reader]')].map(e=>({side:e.dataset.reader,top:e.scrollTop,width:e.clientWidth,pages:[...e.querySelectorAll('[data-page]')].map(p=>p.dataset.page)}))})));await p.screenshot({path:'test-results/zoom-failure.png'});throw error;}finally{await app.evaluate(({app})=>app.exit(0)).catch(()=>{});}

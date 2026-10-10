@@ -1,7 +1,7 @@
 {
   "id": "pdfsandwich-companion",
   "name": "PDFSandwich Companion",
-  "version": "0.6.6",
+  "version": "0.6.7",
   "minAppVersion": "1.5.0",
   "description": "Share Markdown literature notes with PDFSandwich and return to referenced PDF passages.",
   "author": "PDFSandwich contributors",
