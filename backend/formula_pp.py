@@ -11,6 +11,30 @@ import numpy as np
 from PIL import Image, ImageOps
 
 
+def normalize_prose(latex):
+    """Repair letter-token spacing only in recognized mathematical prose.
+
+    Math variables/matrices and unknown text are left untouched. Ordinary TeX
+    spaces outside a text command disappear in math mode, so word boundaries
+    next to variables belong inside the text command as well.
+    """
+    phrases = ('for all', 'and all', 'for any', 'for some', 'such that',
+               'if and only if', 'subject to', 'otherwise', 'where', 'and',
+               'for', 'with', 'when', 'if', 'or', 'as', 'almost everywhere')
+    known = {phrase.replace(' ', ''): phrase for phrase in phrases}
+    def repair(match):
+        body = match[2]
+        compact = re.sub(r'\s+', '', body)
+        phrase = known.get(compact.lower())
+        if not phrase:
+            return match[0]
+        if compact[:1].isupper():
+            phrase = phrase[0].upper()+phrase[1:]
+        command={'mathit':'textit','mathrm':'textrm'}.get(match[1],match[1])
+        return '\\'+command+'{ '+phrase+' }'
+    return re.sub(r'\\(text|textit|textrm|textnormal|textbf|mathit|mathrm)\s*\{([^{}]*)\}', repair, latex)
+
+
 def preprocess(image, size=768):
     # Follow the model's UniMERNet preprocessing, including black letterboxing.
     # Preserve one full image: row splitting destroys matrices and large braces.
@@ -53,7 +77,7 @@ def decode(tokens, tokenizer):
         raise ValueError('未识别到公式，请重新框选完整公式。')
     if not ended:
         raise ValueError('公式过长，识别结果未完整生成；请缩小到一个完整公式后重试。')
-    return latex
+    return normalize_prose(latex)
 
 
 class FormulaModel:

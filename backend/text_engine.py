@@ -17,6 +17,8 @@ class TextEngine:
         self.control=PageControl(request);self.control.check();self.repaired=0
         directory=Path(request['modelDir']);directory.mkdir(parents=True,exist_ok=True)
         self.directory=directory;self.progress=progress
+        from translation_context import page_edges
+        self.page_context=page_edges(request);self.context={}
         engine=self.cfg.get('localEngine','hy')
         if self.cfg.get('provider','local')=='local':
             identity=(str(directory.resolve()),engine)
@@ -33,16 +35,19 @@ class TextEngine:
         self.memory.execute('CREATE TABLE IF NOT EXISTS translations (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
         identity={key:self.cfg.get(key) for key in ('provider','localEngine','glossary','useGlossary')}
         if self.local is None:identity.update(baseUrl=self.cfg['baseUrl'],model=self.cfg['model'])
-        self.identity=json.dumps(identity,sort_keys=True)+'quality-v11'
+        self.identity=json.dumps(identity,sort_keys=True)+'quality-v12'
         self.lock=threading.Lock()
 
     def translate(self,text):
+        from translation_context import unpack
+        text,context=unpack(text)
         reference=text.startswith('\x1ereference\x1f')
         source=normalize(text.removeprefix('\x1ereference\x1f'))
         if not source.strip():return source
         self.control.check()
         with self.lock:
             self.control.check()
+            self.context=context
             try:
                 if reference:output,records=self.translate_reference(source)
                 else:output,records=self.translate_structured(source)
@@ -52,12 +57,13 @@ class TextEngine:
             except Exception as error:
                 self.errors.append(str(error)[:200])
                 raise
+            finally:self.context={}
 
     def translate_structured(self, source, literals=True):
         """Own brackets and citation identity instead of asking a model to copy them."""
         from translation_structure import protected_ranges, visible, styled_slice, scientific_literals
         if literals:
-            ranges=scientific_literals(source)
+            ranges=scientific_literals(source,self.context)
             if ranges:
                 next_id=max([int(x) for x in re.findall(r'\{\s*v\s*(\d+)\s*\}',source)] or [0])+1
                 replacements={};parts=[];offset=0
@@ -152,8 +158,8 @@ class TextEngine:
 
     def generate(self,source):
         if self.local is not None:
-            return self.local.translate(source) if self.cfg.get('localEngine','hy')=='argos' else self.local.translate(source,self.cfg.get('glossary',''),self.cfg.get('useGlossary',True))
-        body={'model':self.cfg['model'],'messages':[{'role':'user','content':translation_prompt(source,self.cfg.get('glossary',''),self.cfg.get('useGlossary',True))}], 'temperature':0,'stream':False,'max_tokens':min(4096,max(200,len(source)*2))}
+            return self.local.translate(source) if self.cfg.get('localEngine','hy')=='argos' else self.local.translate(source,self.cfg.get('glossary',''),self.cfg.get('useGlossary',True),context=self.context,control=self.control)
+        body={'model':self.cfg['model'],'messages':[{'role':'user','content':translation_prompt(source,self.cfg.get('glossary',''),self.cfg.get('useGlossary',True),context=self.context)}], 'temperature':0,'stream':False,'max_tokens':min(4096,max(200,len(source)*2))}
         if 'api.deepseek.com' in self.cfg['baseUrl']:body['thinking']={'type':'disabled'}
         req=urllib.request.Request(self.cfg['baseUrl'].rstrip('/')+'/chat/completions',data=json.dumps(body).encode(),headers={'Content-Type':'application/json','Authorization':'Bearer '+(self.cfg.get('apiKey') or 'local')})
         with urllib.request.urlopen(req,timeout=90) as response:result=json.load(response)
@@ -164,7 +170,7 @@ class TextEngine:
     def translate_cached(self,source,repair=True):
         self.control.check()
         if not re.search(r'[A-Za-z]{2}',source) or re.fullmatch(r'\s*\{\s*v\s*\d+\s*\}\s*',source):return source,[]
-        key=hashlib.sha256((self.identity+source).encode()).hexdigest()
+        key=hashlib.sha256((self.identity+json.dumps(self.context,sort_keys=True)+source).encode()).hexdigest()
         row=self.memory.execute('SELECT value FROM translations WHERE key=?',(key,)).fetchone()
         if row and not self.force:
             saved=json.loads(row[0])
@@ -218,10 +224,10 @@ class TextEngine:
     def close(self):self.control.close();self.memory.close()
 
     def save_alignment(self,file):
-        from alignment import make_record
-        result=[]
+        # Rendering a page must not wait for a second model download/inference.
+        # Exact terms and complete sentences align without it. Refine only the
+        # selected records on demand when the reader actually adds a mark.
         for record in self.records:
-            self.control.check()
-            result.append(record if 'links' in record else make_record(record['source'],record['target'],self.directory,self.progress,self.cfg.get('glossary',''),self.cfg.get('useGlossary',True)))
-        self.records=result
+            if 'links' not in record:
+                record['alignmentPending']=True
         Path(file).write_text(json.dumps(self.records,ensure_ascii=False),encoding='utf-8')

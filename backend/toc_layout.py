@@ -67,6 +67,8 @@ def translate_contents(source,output,translate,progress):
         if len(doc)!=1:return None
         page=doc[0];entries=contents_entries(page)
         if not entries:return None
+        from scan_layout import is_searchable_scan, background_color
+        scan_color=background_color(page) if is_searchable_scan(page) else None
         changes=[];warnings=[];font=pymupdf.Font('china-s')
         def parts(text):return re.split(r'(\{v\d+\})',text)
         def text_width(entry,text,size):
@@ -90,6 +92,13 @@ def translate_contents(source,output,translate,progress):
                 page.add_redact_annot(rect,fill=False,cross_out=False)
         # Text removal must not touch diagrams, images, or numeric columns.
         page.apply_redactions(images=0,graphics=0)
+        if scan_color:
+            # Removing invisible OCR text does not erase the scanned English.
+            # Cover only changed rows; keep page numbers, figures and formulas.
+            for entry in changes:
+                for rect in entry['rects']:
+                    page.draw_rect(pymupdf.Rect(rect)+(-.5,-.5,.5,.5),
+                                   color=None,fill=scan_color,overlay=True)
         with pymupdf.open(source) as original:
             for entry in changes:
                 size=entry['fontSize'];x=entry['x'];ratio=size/entry['size']

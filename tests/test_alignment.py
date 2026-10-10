@@ -6,6 +6,45 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'backend'))
 from alignment import aligned_ranges, compact, sentence_pairs, sentence_spans, utf8_boundaries
 
 
+def test_lazy_alignment_only_refines_selected_record_and_keeps_failed_work_retryable(tmp_path,monkeypatch):
+    from pdf_ops import map_annotation
+    from test_translation_recovery import engine_at
+    import alignment
+    records=[{'source':'First blue object.', 'target':'第一个蓝色物体。','terms':[]},
+             {'source':'Another red object.', 'target':'另一个红色物体。','terms':[]}]
+    source=tmp_path/'en.pdf';target=tmp_path/'zh.pdf'
+    with fitz.open() as src,fitz.open() as dst:
+        s=src.new_page();t=dst.new_page()
+        for i,r in enumerate(records):
+            s.insert_text((50,80+i*100),r['source'])
+            t.insert_text((50,80+i*100),r['target'],fontname='china-s')
+        item={'page':0,'origin':'en','kind':'underline','selectedText':'blue','en':{'rects':[list(s.search_for('blue')[0])]}}
+        src.save(source);dst.save(target)
+    calls=[]
+    def unavailable(*args):calls.append(args[0]);return {}
+    monkeypatch.setattr(alignment,'make_record',unavailable)
+    engine=engine_at(tmp_path);engine.records=records
+    try:engine.save_alignment(tmp_path/'alignment.json')
+    finally:engine.close()
+    assert not calls
+    pending=map_annotation(source,target,item)
+    assert pending.get('needsAlignment') and not calls
+    map_annotation(source,target,item,model_dir=str(tmp_path/'models'))
+    assert calls==['First blue object.']
+    assert json.loads((tmp_path/'alignment.json').read_text(encoding='utf-8'))[0]['alignmentPending']
+    def refined(*args):
+        calls.append(args[0])
+        return {'sourceSpans':[[0,5],[6,10],[11,18]],'targetSpans':[[0,3],[3,5],[5,8]],'links':[0,1,2]}
+    monkeypatch.setattr(alignment,'make_record',refined)
+    result=map_annotation(source,target,item,model_dir=str(tmp_path/'models'))
+    assert result['accuracy']=='phrase'
+    saved=json.loads((tmp_path/'alignment.json').read_text(encoding='utf-8'))
+    assert 'alignmentPending' not in saved[0] and saved[1]['alignmentPending']
+    with fitz.open(target) as pdf:
+        assert '蓝色' in ''.join(pdf[0].get_textbox(fitz.Rect(r)) for r in result['geometry']['rects'])
+    assert map_annotation(target,source,{'page':0,'origin':'zh','kind':'underline','selectedText':'蓝色','zh':result['geometry']})['accuracy']=='phrase'
+
+
 def test_byte_offsets_do_not_shift_words_after_math_or_curly_quotes():
     value='alpha α body 科学'
     offsets=utf8_boundaries(value)

@@ -1,6 +1,14 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { parseRange, cacheKey, validSettings, readingPosition, PageQueue } = require('../electron/core.cjs');
+const { usableTranslation } = require('../electron/core.cjs');
+
+test('only old scan translations are refreshed after the image-layer fix',()=>{
+  assert.equal(usableTranslation({qualityVersion:7,warnings:0},{searchableScan:true}),false);
+  assert.equal(usableTranslation({qualityVersion:8,warnings:0},{searchableScan:true}),true);
+  assert.equal(usableTranslation({qualityVersion:7,warnings:0},{searchableScan:false}),true);
+  assert.equal(usableTranslation({qualityVersion:6,warnings:1},{}),false);
+});
 test('Chinese and OCR documents never enter automatic translation; mixed English pages remain readable',()=>{
   const {mayTranslate}=require('../electron/core.cjs');
   for(const kind of ['chinese','needs-ocr','no-text']) {

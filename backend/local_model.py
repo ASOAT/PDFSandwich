@@ -27,18 +27,10 @@ def prepare_model(directory, progress=lambda message: None):
         if (destination / info["model"] / "model.bin").exists() and (destination / info["tokenizer"]).exists():
             return destination, info
     directory.mkdir(parents=True, exist_ok=True)
-    archive = directory / (MODEL_VERSION + ".argosmodel.download")
+    archive = directory / (MODEL_VERSION + ".argosmodel")
     progress("正在下载离线英译中模型（仅首次需要）")
-    digest = hashlib.sha256()
-    with urllib.request.urlopen(MODEL_URL, timeout=90) as response, archive.open("wb") as output:
-        total = int(response.headers.get("Content-Length", 0))
-        count = 0
-        while chunk := response.read(1024*1024):
-            output.write(chunk); digest.update(chunk); count += len(chunk)
-            progress(f"下载离线模型 {count//1048576} MB" + (f" / {total//1048576} MB" if total else ""))
-    if digest.hexdigest() != MODEL_SHA256:
-        archive.unlink(missing_ok=True)
-        raise ValueError("离线模型下载校验失败，请重试。")
+    from model_download import download
+    download(MODEL_URL,archive,MODEL_SHA256,progress)
     staging = directory / f"{MODEL_VERSION}.{uuid.uuid4().hex}.staging"
     staging.mkdir()
     with zipfile.ZipFile(archive) as package:
@@ -52,12 +44,13 @@ def prepare_model(directory, progress=lambda message: None):
     binary = next(staging.rglob("model.bin"))
     tokenizer = next(staging.rglob("sentencepiece.model"))
     info = {"model": str(binary.parent.relative_to(staging)), "tokenizer": str(tokenizer.relative_to(staging)),
-            "sha256": digest.hexdigest(), "source": MODEL_URL, "version": MODEL_VERSION}
+            "sha256": MODEL_SHA256, "source": MODEL_URL, "version": MODEL_VERSION}
     (staging / "installed.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
     if destination.exists():
         raise ValueError("离线模型安装目录不完整，请在设置中选择新的模型目录。")
     os.replace(staging, destination)
     archive.unlink(missing_ok=True)
+    archive.with_suffix(archive.suffix+'.verified').unlink(missing_ok=True)
     return destination, info
 
 

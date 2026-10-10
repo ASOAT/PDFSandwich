@@ -11,7 +11,9 @@ import time
 import urllib.error
 import urllib.request
 import zipfile
+from cancellation import stream_lines
 from translation_quality import translation_prompt, translation_problem
+from model_download import download
 
 MODEL_FILE='HY-MT1.5-1.8B-Q4_K_M.gguf'
 MODEL_URL='https://huggingface.co/tencent/HY-MT1.5-1.8B-GGUF/resolve/265b2e615a7dc9b06c435dc878829ad99a512ba2/'+MODEL_FILE
@@ -19,47 +21,6 @@ MODEL_SHA='4383ac0c3c8e476de98ff979c2a3f069f8c4fb385e7860cf2d28da896cc477c7'
 RUNTIME_URL='https://github.com/ggml-org/llama.cpp/releases/download/b11243/llama-b11243-bin-win-vulkan-x64.zip'
 RUNTIME_SHA='147f88e011cb04cbaea45917b6f5f639b76c53d3b15e3e077d1458963af61b25'
 MODEL_VERSION='hy-mt1.5-1.8b-q4-v1'
-
-def download(url, target, digest, progress):
-    target=Path(target)
-    verified=target.with_suffix(target.suffix+'.verified')
-    if target.exists() and verified.exists() and verified.read_text() == digest:
-        return
-    target.parent.mkdir(parents=True,exist_ok=True)
-    partial=target.with_suffix(target.suffix+'.download')
-    offset=partial.stat().st_size if partial.exists() else 0
-    if offset:
-        with partial.open('rb') as stream:complete=hashlib.file_digest(stream,'sha256').hexdigest()==digest
-        if complete:
-            os.replace(partial,target);verified.write_text(digest);return
-    size=None;last=0;failures=0
-    while size is None or offset<size:
-        request=urllib.request.Request(url,headers={'Range':f'bytes={offset}-{offset+32*1024*1024-1}'})
-        try:
-            with urllib.request.urlopen(request,timeout=90) as response:
-                content_range=response.headers.get('Content-Range','')
-                if offset and (response.status!=206 or not content_range.startswith(f'bytes {offset}-')):
-                    raise ValueError('下载服务器不支持续传，请稍后重试。')
-                size=int(content_range.rsplit('/',1)[1]) if content_range else int(response.headers.get('Content-Length',0))
-                if not size:raise ValueError('下载服务器未返回文件大小。')
-                remaining=min(size-offset,32*1024*1024);received=0
-                with partial.open('ab' if offset else 'wb') as stream:
-                    while received<remaining:
-                        chunk=response.read(min(1024*1024,remaining-received))
-                        if not chunk:raise OSError('下载连接提前结束')
-                        stream.write(chunk);offset+=len(chunk);received+=len(chunk)
-                        if time.monotonic()-last>2:
-                            progress(f'下载本地高质量模型/运行时 {offset//1048576} / {size//1048576} MB（仅首次需要）');last=time.monotonic()
-                failures=0
-        except OSError:
-            failures+=1
-            if failures>=3:raise
-            offset=partial.stat().st_size if partial.exists() else 0
-            time.sleep(1)
-    with partial.open('rb') as stream: actual=hashlib.file_digest(stream,'sha256').hexdigest()
-    if actual!=digest:
-        partial.unlink(missing_ok=True);raise ValueError('模型下载校验失败，请重试。')
-    os.replace(partial,target);target.with_suffix(target.suffix+'.verified').write_text(digest)
 
 def prepare(directory,progress):
     root=Path(directory)/MODEL_VERSION
@@ -107,14 +68,23 @@ class HyModel:
             except subprocess.TimeoutExpired:self.child.kill()
         self.log.close()
 
-    def translate(self,text,custom='',use_builtin=True):
-        payload={'model':'local','messages':[{'role':'user','content':translation_prompt(text,custom,use_builtin)}],
-            'temperature':.2,'top_p':.6,'top_k':20,'repeat_penalty':1.1,'max_tokens':min(1536,max(160,len(text)*2)), 'stream':False}
+    def translate(self,text,custom='',use_builtin=True,context=None,control=None):
+        payload={'model':'local','messages':[{'role':'user','content':translation_prompt(text,custom,use_builtin,context)}],
+            'temperature':.2,'top_p':.6,'top_k':20,'repeat_penalty':1.1,'max_tokens':min(1536,max(160,len(text)*2)), 'stream':True,'cache_prompt':True}
         request=urllib.request.Request(self.url+'/v1/chat/completions',data=json.dumps(payload).encode(),headers={'Content-Type':'application/json','Authorization':'Bearer '+self.key})
-        with urllib.request.urlopen(request,timeout=120) as response: result=json.load(response)
-        choice=result['choices'][0];output=choice['message']['content'].strip()
+        pieces=[];finish=None
+        for line in stream_lines(request,control):
+            if not line.startswith(b'data:'):continue
+            data=line[5:].strip()
+            if data==b'[DONE]':break
+            event=json.loads(data)
+            if not event.get('choices'):continue
+            choice=event['choices'][0]
+            pieces.append(choice.get('delta',{}).get('content') or '')
+            finish=choice.get('finish_reason') or finish
+        output=''.join(pieces).strip()
         problem=translation_problem(text,output)
-        if choice.get('finish_reason')=='length':problem='译文长度超限'
+        if finish=='length':problem='译文长度超限'
         if problem:raise ValueError(problem)
         return output
 

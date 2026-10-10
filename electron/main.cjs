@@ -6,8 +6,9 @@ const { spawn } = require('node:child_process');
 const { Readable } = require('node:stream');
 const readline = require('node:readline');
 const crypto = require('node:crypto');
-const { cacheKey, parseRange, validSettings, readingPosition, PageQueue, mayTranslate } = require('./core.cjs');
+const { cacheKey, parseRange, validSettings, readingPosition, PageQueue, mayTranslate, usableTranslation, readingWindow } = require('./core.cjs');
 const { TranslationWorker } = require('./translation-worker.cjs');
+const { ReadingSave } = require('./reading-save.cjs');
 const { UpdateController } = require('./updates.cjs');
 const { Library } = require('./library.cjs');
 const { removeLibraryDocuments } = require('./library-removal.cjs');
@@ -22,15 +23,18 @@ const queue = new PageQueue();
 const retranslatePages = new Set();
 let settings = { provider: 'local', localEngine: 'hy', useGlossary: true, glossary: '', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', autoTranslate: true, saveTranslation: false }, apiKey = '', recent = [];
 const pending = new Map(), files = new Map(), mappingTasks = new Set();
+let alignmentTail = Promise.resolve();
 let history = [], future = [], generation = 0, autoPaused = false;
 let removingLibraryDocuments = false;
 let activePage = null, priorityPage = 0, wholeBookActive = false;
+let readingDirection=1;
 const userDir = () => app.getPath('userData');
 const docDir = () => path.join(userDir(), 'documents', doc.id);
 const draftPath = () => path.join(docDir(), 'draft.json');
 const stageLabels = {'Parse PDF and Create Intermediate Representation':'读取页面文字与图形','DetectScannedFile':'检查文字层','Parse Page Layout':'识别页面布局','Parse Paragraphs':'整理正文段落','Parse Formulas and Styles':'保留公式与样式','Translate Paragraphs':'在翻译引擎中处理正文','Typesetting':'排版中文正文','Add Fonts':'准备中文字体','Generate drawing instructions':'生成中文页面','Subset font':'整理页面字体','Save PDF':'保存中文 PDF'};
 const redact = value => String(value).replaceAll(apiKey || '\0', '[redacted]');
 const translator = new TranslationWorker(() => backendCommand('--translate-server'), redact);
+const readingSave = new ReadingSave(()=>persist());
 const translationSaver = new TranslationFileSaver({
   snapshot: () => settings.saveTranslation && doc ? snapshotTranslation(doc) : null,
   write: args => separatePython('sync_translation',args),
@@ -86,7 +90,7 @@ function urlFor(file) { const id = crypto.randomUUID(); files.set(id, file); ret
 function publicSettings() { return { ...settings, hasKey: Boolean(apiKey) }; }
 function state() { if(doc)doc.libraryId=library?.data.documents.find(item=>item.path===doc.path)?.id;return { doc, settings: publicSettings(), recent, canUndo: history.length > 0, canRedo: future.length > 0, queued: queue.length, translating: busy }; }
 function emit() { if (win && !win.isDestroyed()) win.webContents.send('pdfsandwich:state', state()); }
-function persist() { if (doc) jsonWrite(draftPath(), { stamp: doc.stamp, annotations: doc.annotations, dirty: doc.dirty, translationFile:doc.translationFile, cacheVersion: doc.cacheVersion, translator: cacheKey(null, settings), translations: Object.fromEntries(Object.entries(doc.translations).filter(([,v]) => v.status === 'ready').map(([k,v]) => [k, { path: v.path, status: 'ready', warnings: v.warnings || 0, seconds: v.seconds, qualityVersion: v.qualityVersion || 5 }])), page: doc.currentPage, fraction: doc.currentFraction, zoom: doc.viewZoom }); }
+function persist() { readingSave.cancel(); if (doc) jsonWrite(draftPath(), { stamp: doc.stamp, annotations: doc.annotations, dirty: doc.dirty, translationFile:doc.translationFile, cacheVersion: doc.cacheVersion, translator: cacheKey(null, settings), translations: Object.fromEntries(Object.entries(doc.translations).filter(([,v]) => v.status === 'ready').map(([k,v]) => [k, { path: v.path, status: 'ready', warnings: v.warnings || 0, seconds: v.seconds, qualityVersion: v.qualityVersion || 5 }])), page: doc.currentPage, fraction: doc.currentFraction, zoom: doc.viewZoom }); }
 function remember() { history.push(structuredClone(doc.annotations)); if (history.length > 60) history.shift(); future = []; }
 function changed() { doc.dirty = true; persist(); emit(); scheduleTranslationSave(); }
 
@@ -129,6 +133,7 @@ async function openDocument(file) {
   if (typeof file !== 'string' || path.extname(file).toLowerCase() !== '.pdf') throw new Error('请选择 PDF 文件。');
   const metadata = await python('inspect', { path: file });
   await translationSaver.flush();
+  readingSave.flush();
   stopTranslation(); autoPaused = false; files.clear(); history = []; future = [];
   doc = { ...metadata, sourceUrl: urlFor(metadata.path), dirty: false, currentPage: 0, currentFraction: 0, viewZoom: 1, translations: {}, cacheVersion: cacheKey(metadata.stamp, settings), backup: null };
   const saved = readJson(draftPath(), null);
@@ -141,7 +146,7 @@ async function openDocument(file) {
     // Keep the translation namespace across annotation-only saves; source content is unchanged.
     if (saved.translator === cacheKey(null, settings)) {
       doc.cacheVersion = saved.cacheVersion || doc.cacheVersion;
-      for (const [page, item] of Object.entries(saved.translations || {})) if (fs.existsSync(item.path) && !(item.warnings > 0 && (item.qualityVersion || 5) < 7)) doc.translations[page] = { ...item, url: urlFor(item.path), progress: 100 };
+      for (const [page, item] of Object.entries(saved.translations || {})) if (fs.existsSync(item.path) && usableTranslation(item, doc.translationProfile)) doc.translations[page] = { ...item, url: urlFor(item.path), progress: 100 };
     }
   }
   priorityPage = doc.currentPage;
@@ -173,6 +178,14 @@ async function mapItem(id, anchor) {
   let mapping = await python('map_annotation', args);
   const stillExists = () => doc === current && current.annotations.includes(item) && item.accuracy !== 'manual' && current.translations[item.page] === translation;
   if (!stillExists()) return;
+  if (mapping.needsAlignment) {
+    // Keep model downloads off the lightweight PDF worker. Serialize alignment
+    // requests so several new marks do not download the same model together.
+    const task=alignmentTail.then(()=>stillExists()?separatePython('map_annotation',{...args,model_dir:path.join(userDir(),'models')}):null);
+    alignmentTail=task.catch(()=>{});
+    mapping=await task;
+    if(!mapping||!stillExists())return;
+  }
   if (JSON.stringify(item[target]) !== JSON.stringify(mapping.geometry) || item.accuracy !== mapping.accuracy || item.mappingVersion !== 4) {
     item[target] = mapping.geometry; item.accuracy = mapping.accuracy; item.mappingVersion = 4; changed();
   }
@@ -223,11 +236,11 @@ async function pump() {
     if (!fs.existsSync(input) || !fs.statSync(input).size) await python('extract_page', { path: current.path, index, output: input });
     if (version !== generation) return;
     if (task.cancelRequested) throw Object.assign(new Error('优先处理当前页'), { code: 'TRANSLATION_CANCELLED' });
-    const result = await translator.run({ input, output, force, modelDir: path.join(userDir(), 'models'), settings: { ...settings, apiKey: settings.provider === 'api' ? apiKey : '' } }, userDir(), event => {
+    const result = await translator.run({ input, output, force, documentPath:current.path, pageIndex:index, modelDir: path.join(userDir(), 'models'), settings: { ...settings, apiKey: settings.provider === 'api' ? apiKey : '' } }, userDir(), event => {
       if (version === generation) { Object.assign(current.translations[index], { progress: event.progress, stage: stageLabels[event.stage] || event.stage }); emit(); }
     });
     if (version !== generation) return;
-    current.translations[index] = { status: 'ready', progress: 100, path: output, url: urlFor(output), warnings: result.warnings || 0, seconds: result.seconds, qualityVersion: 7 }; persist(); emit();
+    current.translations[index] = { status: 'ready', progress: 100, path: output, url: urlFor(output), warnings: result.warnings || 0, seconds: result.seconds, qualityVersion: 8 }; persist(); emit();
     library?.translation(current.path,Object.values(current.translations).filter(item=>item.status==='ready').length);
     scheduleTranslationSave();
     for (const item of current.annotations.filter(a => a.page === index)) { if (item.accuracy === 'manual') item.accuracy = 'pending'; scheduleMap(item.id, item.en ? 'en' : undefined); }
@@ -237,7 +250,7 @@ async function pump() {
       current.translations[index] = { status: keep ? 'queued' : 'idle', progress: 0 };
       if (keep) { queue.requeue(index, explicit); if (force) retranslatePages.add(index); }
       // A second jump may have arrived while the first cancellation was draining.
-      enqueue([priorityPage, priorityPage+1, priorityPage-1], true, true);
+      enqueue(readingWindow(priorityPage,priorityPage-readingDirection,current.pages.length), true, true);
     } else current.translations[index] = { status: 'error', progress: 0, error: redact(error.message) };
     emit();
   } }
@@ -257,9 +270,13 @@ const actions = {
   save,
   page: ({ page, fraction = 0, zoom, documentUrl }) => {
     if (!doc || (documentUrl && documentUrl !== doc.sourceUrl) || !Number.isInteger(page) || page < 0 || page >= doc.pages.length) return;
+    const pageChanged=page!==doc.currentPage;
     const position = readingPosition({ page, fraction, zoom: zoom ?? doc.viewZoom }, doc.pages.length);
     doc.currentPage = position.page; doc.currentFraction = position.fraction; doc.viewZoom = position.zoom;
-    persist(); if (!autoPaused && (settings.autoTranslate || wholeBookActive)) { priorityPage = page; enqueue([page, page+1, page-1], true, true); prioritizePage(page); }
+    readingSave.request(); if (!autoPaused && (settings.autoTranslate || wholeBookActive) && (pageChanged || !doc.translations[page]) && mayTranslate(doc,page,true)) {
+      if(page!==priorityPage)readingDirection=page>priorityPage?1:-1;
+      priorityPage = page; enqueue(readingWindow(page,page-readingDirection,doc.pages.length), true, true); prioritizePage(page);
+    }
   },
   translate: ({ all, page, force }) => {
     if (!doc) return; autoPaused = false; const current = page ?? doc.currentPage; priorityPage = current;
@@ -486,7 +503,7 @@ app.whenReady().then(() => {
   win.webContents.on('will-navigate', event => event.preventDefault());
   ipcMain.handle('pdfsandwich:call', async (event, action, args) => { const primary=event.sender===win.webContents&&event.senderFrame===win.webContents.mainFrame;const secondary=research.trusted(event)&&/^(notes|research)/.test(action);if((!primary&&!secondary)||!Object.hasOwn(actions,action))throw new Error('未知操作。'); if (updates.snapshot().status === 'installing' && !['updateState', 'state', 'notesSave', 'notesGet', 'notesFlushed'].includes(action)) throw new Error('正在准备安装更新，请稍候。'); if(removingLibraryDocuments&&!['state','libraryState','updateState','notesSave','notesGet','notesFlushed'].includes(action)){if(['page','translate'].includes(action))return;throw new Error('正在移除文献，请稍候。');} return actions[action](args || {}); });
   if (process.env.PDFSANDWICH_DEV_URL === 'http://127.0.0.1:5173') win.loadURL(process.env.PDFSANDWICH_DEV_URL); else win.loadFile(path.join(root, 'dist', 'index.html'));
-  win.on('close', event => { if (stopping) return; event.preventDefault(); if (removingLibraryDocuments || updates.snapshot().status === 'installing') return; research.flush().then(ok=>ok?mayLeave():false).then(async yes => { if (yes) { stopping = true; await stopTranslation(); await Promise.allSettled([...mappingTasks]); await translationSaver.flush(); worker?.kill(); win.destroy(); app.quit(); } }).catch(error => dialog.showErrorBox('保存失败', redact(error.message))); });
+  win.on('close', event => { if (stopping) return; event.preventDefault(); if (removingLibraryDocuments || updates.snapshot().status === 'installing') return; research.flush().then(ok=>ok?mayLeave():false).then(async yes => { if (yes) { stopping = true; readingSave.flush(); await stopTranslation(); await Promise.allSettled([...mappingTasks]); await translationSaver.flush(); worker?.kill(); win.destroy(); app.quit(); } }).catch(error => dialog.showErrorBox('保存失败', redact(error.message))); });
   const resumeFile = path.join(userDir(), 'resume-update.json');
   const resume = readJson(resumeFile, null);
   if (fs.existsSync(resumeFile)) fs.unlinkSync(resumeFile);

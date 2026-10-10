@@ -361,3 +361,19 @@ def map_records(page, counterpart, item, records):
     # Geometric source validation disambiguates repeated phrases on a page.
     best=max(candidates,key=lambda value:(value[0],value[1],-value[2]))
     return {'geometry':{'rects':merge_rects(best[3])},'accuracy':'phrase'}
+
+
+def pending_records(page, counterpart, item, records):
+    """Select alignment work by actual selected glyphs, never by page-wide words."""
+    origin=item.get('origin','en')
+    src,dst=('source','target') if origin=='en' else ('target','source')
+    selection=[fitz.Rect(rect) for rect in item[origin]['rects']]
+    source_text,source_chars=glyphs(page)
+    target_text,_=glyphs(counterpart)
+    needed=[]
+    for record,sources,targets in owned_record_instances(source_text,target_text,records,src,dst):
+        if not record.get('alignmentPending') or not targets:
+            continue
+        if any(any(coverage([char],selection)>=.5 for char in source_chars[p[0][2]:p[-1][3]]) for p in sources):
+            needed.append(record)
+    return needed

@@ -26,7 +26,7 @@ def styled_slice(source, start, end):
     return re.sub(r"<style id='\d+'></style>",'',value)
 
 
-def scientific_literals(source):
+def scientific_literals(source, context=None):
     """Resolve reference labels together with their colored number, not alone.
 
     The visible offset map permits a label/number to span several style runs.
@@ -45,6 +45,11 @@ def scientific_literals(source):
         return ''.join(part if STYLE.fullmatch(part) else value if part else ''
                        for part in re.split('('+STYLE.pattern+')',fragment))
     matches=[]
+    where=re.match(r'\s*(where)\b',plain,re.I)
+    definition=re.match(r'\s*where\s+(?:\{\s*v\s*\d+\s*\}|[A-Za-z]\w{0,2})\s+(?:is|are|denotes?|represents?|stands\s+for)\b',plain,re.I)
+    if where and ((context or {}).get('precededByFormula') or definition):
+        start,end=offsets[where.start(1)],offsets[where.end(1)-1]+1
+        matches.append((start,end,styled_label(start,'其中')))
     for match in pattern.finditer(plain):
         start,end=offsets[match.start()],offsets[match.end()-1]+1
         label=match['label'].lower().rstrip('.').rstrip('s')

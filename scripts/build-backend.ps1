@@ -5,6 +5,13 @@ Set-Location -LiteralPath $projectRoot
 if ($LASTEXITCODE -ne 0) { throw 'Pinned layout patch failed' }
 & .venv\Scripts\python.exe -m PyInstaller --noconfirm --name pdfsandwich-worker --distpath backend-dist --workpath tmp/pyinstaller --specpath tmp --paths backend --collect-all babeldoc --collect-all pdf2zh_next --collect-all tokenizers --collect-all onnxruntime --collect-all tiktoken --collect-all ctranslate2 --collect-all sentencepiece --collect-all bitstring --collect-all bitarray --hidden-import formula_pp --hidden-import research --hidden-import formula_ocr --hidden-import translate --hidden-import local_model --hidden-import hy_model --hidden-import text_engine --hidden-import translation_quality --hidden-import toc_layout --hidden-import alignment --hidden-import annotation_alignment --hidden-import layout_runtime --hidden-import pymupdf --hidden-import huggingface_hub --exclude-module pytest --exclude-module scipy --exclude-module pandas --exclude-module sklearn --exclude-module skimage backend/worker.py
 if ($LASTEXITCODE -ne 0) { throw 'Backend packaging failed' }
+# Image processing does not use OpenCV's optional video decoder. Keep cv2 itself
+# for formula/layout preprocessing and exclude only this generated companion DLL.
+$cv2Output = [IO.Path]::GetFullPath((Join-Path $projectRoot 'backend-dist/pdfsandwich-worker/_internal/cv2'))
+Get-ChildItem -LiteralPath $cv2Output -Filter 'opencv_videoio_ffmpeg*_64.dll' -File | ForEach-Object {
+    if ($_.DirectoryName -ne $cv2Output -or ($_.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Unexpected OpenCV output path' }
+    Remove-Item -LiteralPath $_.FullName -Force
+}
 # Hyperscan's wheel uses an adjacent delvewheel directory. Other packages
 # contain the same DLL but their search paths are not loaded when it imports.
 $hyperscanLibs = Join-Path $projectRoot '.venv/Lib/site-packages/hyperscan.libs'

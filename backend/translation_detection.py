@@ -44,4 +44,6 @@ def document_profile(document):
         kind='no-text'
     else:
         kind='unknown'
-    return {'kind':kind,'sampledPages':len(indices)},pages
+    from scan_layout import is_searchable_scan
+    searchable_scan=any(is_searchable_scan(document[i]) for i in indices if pages[i]=='english')
+    return {'kind':kind,'sampledPages':len(indices),'searchableScan':searchable_scan},pages

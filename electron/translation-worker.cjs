@@ -24,7 +24,7 @@ class TranslationWorker {
       let event; try { event = JSON.parse(line); } catch { return; }
       const job = this.active;
       if (!job || job.child !== child || event.id !== job.id) return;
-      if (event.type === 'progress') job.progress(event);
+      if (event.type === 'progress') { job.timer.refresh();job.progress(event); }
       else if (['finish', 'error', 'cancelled'].includes(event.type)) {
         this.active = null; this.cleanup(job);
         this.scheduleIdle();

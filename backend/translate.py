@@ -13,12 +13,14 @@ from cancellation import PageCancelled
 async def translate_request(request,send):
     from text_engine import TextEngine
     from toc_layout import translate_contents
+    from scan_layout import scan_profile
     started=time.perf_counter()
     engine=TextEngine(request,lambda message:send({'type':'progress','progress':0,'stage':message}))
     output=Path(request['output']);output.parent.mkdir(parents=True,exist_ok=True)
     temporary=str(output)+'.tmp'
     try:
         engine.control.check()
+        scan=scan_profile(request['input'])
         toc=translate_contents(request['input'],temporary,engine.translate,
             lambda stage,progress:send({'type':'progress','progress':progress,'stage':stage}))
         if toc is None:
@@ -31,14 +33,17 @@ async def translate_request(request,send):
             from babeldoc.format.pdf.translation_config import TranslationConfig, WatermarkOutputMode
             from layout_runtime import install, LayoutTranslator
             install()
+            from scan_layout import install as install_scan
+            install_scan()
             config=TranslationConfig(translator=LayoutTranslator(engine), input_file=Path(request['input']),
                 lang_in='en', lang_out='zh', doc_layout_model=None,
                 output_dir=str(output.parent/'engine-output'), debug=False, no_dual=True,
                 watermark_output_mode=WatermarkOutputMode.NoWatermark,
                 qps=100 if engine.local is not None else 2, pool_max_workers=2,
-                auto_extract_glossary=False, table_model=None, ocr_workaround=False,
+                auto_extract_glossary=False, table_model=None, ocr_workaround=bool(scan),
                 auto_enable_ocr_workaround=False, remove_non_formula_lines=False,
                 disable_rich_text_translate=False, use_rich_pbar=False)
+            config._sandwich_scan=scan
             engine.control.check()
             engine.control.watch(config)
             if profile:
@@ -58,7 +63,14 @@ async def translate_request(request,send):
                     result=event['translate_result']
                     source=getattr(result,'no_watermark_mono_pdf_path',None) or getattr(result,'mono_pdf_path',None)
                     if not source or not Path(source).is_file():raise RuntimeError('翻译引擎未生成译文 PDF。')
-                    shutil.copyfile(source,temporary);break
+                    shutil.copyfile(source,temporary)
+                    # Only the verified final copy is consumed by the reader.
+                    # Do not retain a second PDF for every translated page.
+                    generated=Path(source).resolve()
+                    if generated.parent==(output.parent/'engine-output').resolve():
+                        try:generated.unlink()
+                        except OSError:pass
+                    break
         if engine.errors:raise RuntimeError('翻译服务调用失败：'+engine.errors[0])
         engine.control.check()
         warnings=engine.warnings+(toc['warnings'] if toc else [])
@@ -66,6 +78,7 @@ async def translate_request(request,send):
         engine.control.check()
         os.replace(temporary,output)
         report={'warnings':warnings,'repairedSegments':engine.repaired,'cachedSegments':engine.hits,'seconds':round(time.perf_counter()-started,2),'layout':'contents' if toc else 'babeldoc'}
+        report['searchableScan']=bool(scan)
         output.with_name('quality.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
         send({'type':'finish','path':str(output),'warnings':len(warnings),'repairedSegments':engine.repaired,'seconds':report['seconds']})
     except (Exception, asyncio.CancelledError):

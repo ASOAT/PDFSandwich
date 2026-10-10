@@ -5,6 +5,18 @@ import pytest
 from PIL import Image, ImageDraw
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'backend'))
 from formula_pp import preprocess, decode
+from formula_pp import normalize_prose
+
+
+def test_mathematical_prose_restores_words_without_merging_variables():
+    source=r'\begin{array}{lll}\Omega(u_i,v)=0,&{\textit{f o r a l l}i\textit{a n d a l l}v\in V},\\ \Omega(e_i,f_j)=\delta_{ij},&\textit{f o r a l l}i,j.\end{array}'
+    fixed=normalize_prose(source)
+    assert r'\textit{ for all }i\textit{ and all }v\in V' in fixed
+    assert r'\delta_{ij}' in fixed
+    assert normalize_prose(fixed)==fixed
+    assert normalize_prose(r'\mathit { f o r a l l } i')==r'\textit{ for all } i'
+    untouched=r'\mathit{f o o}\mathrm{d x}\text{A B C}\begin{pmatrix}a&b\\c&d\end{pmatrix}'
+    assert normalize_prose(untouched)==untouched
 
 
 def test_formula_image_keeps_entire_matrix_and_has_bounded_resolution():

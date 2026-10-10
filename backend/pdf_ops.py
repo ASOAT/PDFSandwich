@@ -229,7 +229,7 @@ def selection_geometry(path, page_indexes):
         return result
 
 
-def map_annotation(source_path, target_path, item, quote=None):
+def map_annotation(source_path, target_path, item, quote=None, model_dir=None):
     """Use text geometry near the translated paragraph. Return explicit approximate status."""
     origin, target = item.get("origin", "en"), "zh" if item.get("origin", "en") == "en" else "en"
     source_index, target_index = (item["page"], 0) if origin == "en" else (0, item["page"])
@@ -243,8 +243,27 @@ def map_annotation(source_path, target_path, item, quote=None):
         counterpart = dst[target_index]
         alignment = Path(target_path if origin == "en" else source_path).with_name("alignment.json")
         if not quote and alignment.exists():
-            from annotation_alignment import map_records
-            mapped = map_records(page, counterpart, item, json.loads(alignment.read_text(encoding="utf-8")))
+            from annotation_alignment import map_records, pending_records
+            saved=alignment.read_text(encoding='utf-8')
+            records=json.loads(saved)
+            needed=pending_records(page,counterpart,item,records)
+            if needed and model_dir:
+                from alignment import make_record
+                for record in needed:
+                    extra=make_record(record['source'],record['target'],model_dir,lambda _:None)
+                    record.update({key:value for key,value in extra.items() if key not in ('source','target','terms')})
+                    if extra.get('links'):
+                        record.pop('alignmentPending',None)
+                # A concurrent page retranslation owns its new alignment file.
+                if alignment.read_text(encoding='utf-8')==saved:
+                    temporary=alignment.with_name('alignment.'+uuid.uuid4().hex+'.tmp')
+                    try:
+                        temporary.write_text(json.dumps(records,ensure_ascii=False),encoding='utf-8')
+                        os.replace(temporary,alignment)
+                    finally:temporary.unlink(missing_ok=True)
+            mapped = map_records(page, counterpart, item, records)
+            if needed and not model_dir:
+                return {'geometry':None,'accuracy':'pending','needsAlignment':True}
             if mapped:
                 return mapped
         selected = union(geo["rects"])

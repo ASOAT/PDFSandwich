@@ -54,4 +54,14 @@ function mayTranslate(doc, index, automatic = false) {
   return Boolean(doc?.pages[index]) && !blocked.has(doc.pages[index].translationKind)
     && !(automatic && blocked.has(doc.translationProfile?.kind));
 }
-module.exports = { cacheKey, parseRange, validSettings, readingPosition, PageQueue, mayTranslate };
+function usableTranslation(item, profile) {
+  const version = item.qualityVersion || 5;
+  // Refresh translations produced before searchable-scan layer repair. Keep
+  // native-PDF caches and the source annotations/reading position intact.
+  return !(item.warnings > 0 && version < 7) && !(profile?.searchableScan && version < 8);
+}
+function readingWindow(page, previous, total) {
+  const direction=Number.isInteger(previous)&&page<previous?-1:1;
+  return [page,page+direction,page+2*direction,page+3*direction,page-direction].filter(p=>p>=0&&p<total);
+}
+module.exports = { cacheKey, parseRange, validSettings, readingPosition, PageQueue, mayTranslate, usableTranslation, readingWindow };

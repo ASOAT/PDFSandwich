@@ -12,7 +12,7 @@ _installed = False
 
 
 class LayoutTranslator:
-    name = 'pdfsandwich-v11'
+    name = 'pdfsandwich-v12'
     preserves_styles = True
     model = 'guarded-text'
     lang_in = 'en'
@@ -52,6 +52,15 @@ def install():
     from babeldoc.format.pdf.document_il.midend.il_translator import ILTranslator
     DocLayoutModel.load_available = staticmethod(functools.cache(DocLayoutModel.load_available))
     prepare = ILTranslator.pre_translate_paragraph
+    translate_page = ILTranslator.process_page
+
+    def translate_page_with_context(self, page, *args, **kwargs):
+        from translation_context import contexts_for_page
+        engine=getattr(self.translate_engine,'engine',None)
+        self.translation_config._sandwich_contexts=contexts_for_page(page,getattr(engine,'page_context',{}))
+        return translate_page(self,page,*args,**kwargs)
+
+    ILTranslator.process_page = translate_page_with_context
 
     def prepare_styled(self, paragraph, tracker, page_font_map, xobj_font_map):
         if getattr(self.translate_engine, 'preserves_styles', False):
@@ -64,6 +73,9 @@ def install():
             text, translation_input = prepare(proxy, paragraph, tracker, page_font_map, xobj_font_map)
             if text and paragraph.layout_label == 'reference':
                 text = '\x1ereference\x1f' + text
+            if text:
+                from translation_context import envelope
+                text=envelope(text,getattr(self.translation_config,'_sandwich_contexts',{}).get(id(paragraph)))
             return text, translation_input
         return prepare(self, paragraph, tracker, page_font_map, xobj_font_map)
 
