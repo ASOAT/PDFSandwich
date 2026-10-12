@@ -120,7 +120,7 @@ function createResearch({app, BrowserWindow, dialog, shell, clipboard, Clipboard
     formulaRecognize:async({clipId,retry=false})=>{const clip=clips.get(clipId);if(!clip)throw new Error('截图已过期。');const target=path.join(userDir(),'formula-captures',`${clipId}.png`);fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,Buffer.from(clip.png,'base64'));return formulas.recognize(clipId,{image:target,directory:path.join(userDir(),'models','formula')},!!retry);},
     libraryCover:async({id})=>{const item=library.get(id),stat=fs.statSync(item.path),target=path.join(userDir(),'covers',`${id}-${stat.mtimeMs}.png`);if(!fs.existsSync(target))await python('research_cover',{path:item.path,output:target});return asset(target);},
     metadataIdentify:({id})=>python('research_identifiers',{path:library.get(id).path}),
-    metadataLookup:({query})=>metadata.lookup(query),
+    metadataLookup:({query,titles})=>metadata.lookup(query,{titles}),
     metadataApply:({id,changes})=>{const fields=['title','authors','year','doi','abstract','journal','url','bibtex'];library.editDocument(id,Object.fromEntries(fields.filter(key=>typeof changes[key]==='string').map(key=>[key,changes[key]])));return library.snapshot();},
     metadataBibtex:({id})=>{const item=library.get(id);return item.bibtex||metadata.bibtex(item);},
     libraryMove:({ids,collectionId})=>{if(!Array.isArray(ids)||ids.length>10000)throw new Error('请选择文献。');for(const id of ids)library.editDocument(id,{collections:collectionId?[collectionId]:[]});return library.snapshot();},

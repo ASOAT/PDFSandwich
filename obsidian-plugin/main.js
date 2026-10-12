@@ -26,7 +26,14 @@ module.exports=class PDFSandwichCompanion extends Plugin {
     }));
     this.registerEvent(this.app.vault.on('rename',async(file,oldPath)=>{
       await this.readIndex();let changed=false;
-      for(const record of Object.values(this.notes))if(record.path===oldPath||record.path.startsWith(oldPath+'/')){record.path=file.path+record.path.slice(oldPath.length);changed=true;}
+      for(const record of Object.values(this.notes))if(record.path===oldPath||record.path.startsWith(oldPath+'/')){
+        const destination=file.path+record.path.slice(oldPath.length);
+        // A folder move keeps the full title of a shortened filename. A user
+        // renaming the file itself chooses a new fallback title; Markdown and
+        // YAML titles remain untouched and retain priority in the reader.
+        if(record.path.split('/').at(-1)!==destination.split('/').at(-1))delete record.title;
+        record.path=destination;changed=true;
+      }
       if(changed)await this.app.vault.adapter.write(INDEX,JSON.stringify({version:1,notes:this.notes},null,2));
     }));
     this.registerInterval(window.setInterval(async()=>{await this.readSettings();await this.readIndex();},3000));

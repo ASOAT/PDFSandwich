@@ -4,13 +4,16 @@ const { randomUUID, createHash } = require('node:crypto');
 const YAML = require('yaml');
 const {NoteIndex}=require('./note-index.cjs');
 const {templateContent}=require('./note-template.cjs');
+const {noteFilename}=require('./note-filename.cjs');
 
 const hash = text => createHash('sha256').update(text).digest('hex');
 const slug = name => String(name || 'Untitled').replace(/[<>:"/\\|?*\x00-\x1f]/g, '-').replace(/[. ]+$/g, '').slice(0, 110) || 'Untitled';
 const within = (root, file) => { const relative = path.relative(root, file); return relative === '' || (!relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative)); };
 function atomic(file, content) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temp = file + '.' + randomUUID() + '.tmp';
+  // A valid long Markdown filename must remain writable: appending a UUID to
+  // that filename would exceed the filesystem's component limit on save.
+  const temp = path.join(path.dirname(file),'.pdfsandwich-'+randomUUID()+'.tmp');
   try { fs.writeFileSync(temp, content, { flag: 'wx' }); fs.renameSync(temp, file); }
   finally { if (fs.existsSync(temp)) fs.unlinkSync(temp); }
 }
@@ -187,7 +190,7 @@ class NotesStore {
         if(Object.hasOwn(changes,'templateFile'))value.templateFile=changes.templateFile;
         atomic(shared,JSON.stringify(value,null,2));
       }
-      if(migrate&&nextRoot!==oldRoot){const index=new NoteIndex(next.mode==='obsidian'?next.vault:nextRoot);for(const note of migrationNotes)index.register(path.join(nextRoot,note.relative),note.id,note.documentId);}
+      if(migrate&&nextRoot!==oldRoot){const index=new NoteIndex(next.mode==='obsidian'?next.vault:nextRoot);for(const note of migrationNotes)index.register(path.join(nextRoot,note.relative),note.id,note.documentId,note.title);}
       this.config = next; this.connect(); atomic(this.configFile, JSON.stringify(this.config, null, 2));
     } catch (error) { this.config = previous; this.connect(); throw error; }
     this.onChange({ type: 'notes-settings', settings: this.settings() }); return this.settings();
@@ -211,9 +214,9 @@ class NotesStore {
       const cached=cachedByPath.get(relative);
       if(cached&&cached.modified===stat.mtimeMs&&cached.bytes===stat.size){result.set(cached.id,cached);continue;}
       const content = fs.readFileSync(file, 'utf8'), { meta, body } = parse(content);
-      const {id,documentId}=this.associations.identify(file,stat,content,meta);
+      const {id,documentId,title}=this.associations.identify(file,stat,content,meta);
       if (result.has(id)) continue;
-      result.set(id, { id, relative, title: String(meta.title || /^#\s+(.+)$/m.exec(body)?.[1] || path.basename(file, '.md')), documentId: String(documentId), category: path.dirname(relative) === '.' ? '' : path.dirname(relative), tags: Array.isArray(meta.tags) ? meta.tags.map(String) : [], modified: stat.mtimeMs, bytes:stat.size, content, version: hash(content) });
+      result.set(id, { id, relative, title: String(meta.title || /^#\s+(.+)$/m.exec(body)?.[1] || title || path.basename(file, '.md')), documentId: String(documentId), category: path.dirname(relative) === '.' ? '' : path.dirname(relative), tags: Array.isArray(meta.tags) ? meta.tags.map(String) : [], modified: stat.mtimeMs, bytes:stat.size, content, version: hash(content) });
     }
     this.associations.flush();this.index = result;
   }
@@ -232,13 +235,23 @@ class NotesStore {
   }
   create({ title = 'Untitled', category = '', document } = {}) {
     this.scan();
-    if (document) { const existing = [...this.index.values()].find(n => n.documentId === document.id); if (existing) return this.get(existing.id); }
+    if (document) { const existing = [...this.index.values()].find(n => n.documentId === document.id); if (existing) {
+      const note=this.get(existing.id),basename=path.basename(note.relative,'.md'),legacy=slug(document.title);
+      // Recover old 110-character names from the linked PDF's known title.
+      // Do not rename files or replace a handwritten/frontmatter title.
+      if(document.title&&document.title.length>110&&!this.associations.records[note.id]?.title&&note.title===basename&&(basename===legacy||/^ - [a-f0-9]{8}$/i.test(basename.slice(legacy.length))&&basename.startsWith(legacy))){
+        this.associations.register(this.resolve(note.relative),note.id,note.documentId,document.title);
+        return this.get(note.id);
+      }
+      return note;
+    } }
     const id=randomUUID(),noteTitle=document?.title||title;
     const content=templateContent(this.config,{...document,title:noteTitle},(root,relative)=>this.safeFolder(root,relative));
-    const base=this.resolve(path.join(category,slug(noteTitle)));
-    let file=base+'.md';if(fs.existsSync(file))file=base+' - '+id.slice(0,8)+'.md';
+    const directory=this.resolve(category);
+    let file=path.join(directory,noteFilename(directory,noteTitle));
+    if(fs.existsSync(file))file=path.join(directory,noteFilename(directory,noteTitle,' - '+id.slice(0,8)));
     fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,content,{flag:'wx'});
-    this.associations.register(file,id,document?.id||'');
+    this.associations.register(file,id,document?.id||'',String(noteTitle));
     this.onChange({ type: 'notes-changed', id }); return this.get(id);
   }
   save({ id, content, version, base }) {
@@ -261,20 +274,20 @@ class NotesStore {
     this.onChange({ type: 'notes-changed', id }); return { conflict: false, note: this.get(id) };
   }
   rename({ id, name, category = '' }) {
-    const note = this.get(id), destination = this.resolve(path.join(category, slug(name) + '.md'));
+    const note = this.get(id),directory=this.resolve(category),title=String(name||'Untitled').trim()||'Untitled',destination=path.join(directory,noteFilename(directory,title));
     const source = this.resolve(note.relative);
     if (destination !== source && fs.existsSync(destination)) throw new Error('已有同名笔记。');
     fs.mkdirSync(path.dirname(destination), { recursive: true });
     // The rename is explicit; change its title while retaining all other YAML and body text.
     const match=/^---\r?\n([\s\S]*?)\r?\n---(\r?\n|$)/.exec(note.content);
     let content=note.content;
-    if(match){const yaml=YAML.parseDocument(match[1]);if(!yaml.errors.length){yaml.set('title',String(name).trim());content='---\n'+yaml.toString()+'---\n'+note.content.slice(match[0].length);}}
-    const oldHeading='# '+note.title;content=content.split('\n').map((line,index,lines)=>line===oldHeading&&lines.indexOf(oldHeading)===index?'# '+String(name).trim():line).join('\n');
+    if(match){const yaml=YAML.parseDocument(match[1]);if(!yaml.errors.length){yaml.set('title',title);content='---\n'+yaml.toString()+'---\n'+note.content.slice(match[0].length);}}
+    const oldHeading='# '+note.title;content=content.split('\n').map((line,index,lines)=>line===oldHeading&&lines.indexOf(oldHeading)===index?'# '+title:line).join('\n');
     if(path.dirname(source)!==path.dirname(destination))content=rebaseLinks(content,path.dirname(source),path.dirname(destination));
     if(content!==note.content){const backup=path.join(this.root,'.pdfsandwich','history',slug(id),`${Date.now()}-rename.md`);atomic(backup,note.content);atomic(source,content);}
     fs.renameSync(source, destination);
-    this.associations.register(destination,note.id,note.documentId);
-    this.onChange({ type: 'notes-changed' }); this.scan();
+    this.associations.register(destination,note.id,note.documentId,title);
+    this.onChange({ type: 'notes-changed' }); this.index.delete(id);this.scan();
     return [...this.index.values()].find(n => n.relative === path.relative(this.root, destination));
   }
   appendExcerpt({ noteId, document, page, annotationId, rects = [], source = '', translation = '', thought = '', bilingual = true, attachment, latex }) {

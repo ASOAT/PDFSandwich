@@ -8,7 +8,7 @@ import copy
 import re
 from collections import Counter
 
-MATH_FONT = re.compile(r'(?:CMMI|CMSY|CMEX|MnSymbol|MSAM|MSBM|STIX.*Math|CambriaMath|LatinModernMath)', re.I)
+MATH_FONT = re.compile(r'(?:CMMI|CMSY|CMEX|MnSymbol|MSAM|MSBM|STIX.*Math|CambriaMath|LatinModernMath|LMMath)', re.I)
 ROMAN_MATH_FONT = re.compile(r'^(?:CMR|CMBX|CMSS)\d+$', re.I)
 OPERATORS = r'exp|log|ln|sin|cos|tan|cot|sinh|cosh|tanh|lim|max|min|argmax|argmin|det|diag|tr|Pr|Var|Cov|rollout'
 _installed = False
@@ -268,7 +268,7 @@ def install():
         self._sandwich_fonts = math_fonts(page)
         self._sandwich_formula_id = -10000
         from reference_layout import split_references, explicit_word_spaces
-        from layout_atoms import split_numbered_lists, protect_inline_badges
+        from layout_atoms import split_numbered_lists, protect_inline_badges, protect_overhead_accents
         from prose_layout import join_fragmented_prose, join_fragmented_titles, preserve_author_rows
         join_fragmented_titles(page)
         join_fragmented_prose(page)
@@ -277,6 +277,7 @@ def install():
         split_numbered_lists(page)
         preserve_algorithms(page, *self._sandwich_fonts)
         protect_heading_number(page)
+        protect_overhead_accents(page,self._sandwich_fonts[0])
         # Materialize position-only word gaps before color/font runs split
         # references such as "Fig. 5 depicts" or "Listing 2 reports".
         for paragraph in page.pdf_paragraph:

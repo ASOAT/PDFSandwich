@@ -122,3 +122,76 @@ test('Obsidian templates apply only to new notes; settings preserve chosen templ
   await new Promise(r=>setTimeout(r,650));assert.equal(store.create({title:'Blank'}).content,'');assert.equal(store.get(note.id).content,note.content);
   store.configure({templateFile:'../secret.md'});assert.throws(()=>store.create({title:'Invalid'}),/文件夹|Vault/);
 });
+
+test('long document titles remain complete in filenames, blank notes and after restart',t=>{
+  const {store,root}=fixture(t),title='A comprehensive study of scientific document workflows and reproducible reading with detailed findings across multiple research areas';
+  assert.ok(title.length>110);
+  const note=store.create({document:{...doc,title}});
+  assert.equal(note.title,title);assert.equal(note.relative,title+'.md');assert.equal(note.content,'');
+  const saved=store.save({id:note.id,base:note.content,version:note.version,content:'My handwritten text'}).note;
+  assert.equal(saved.title,title);
+  store.dispose();const restarted=new NotesStore(path.join(root,'config.json'),path.join(root,'Notes'));t.after(()=>restarted.dispose());
+  assert.equal(restarted.create({document:{...doc,title}}).id,note.id);
+  assert.equal(restarted.get(note.id).title,title);assert.equal(restarted.get(note.id).content,'My handwritten text');
+  const moved=restarted.rename({id:note.id,name:title,category:'Methods'});
+  assert.equal(moved.title,title);assert.equal(moved.documentId,doc.id);
+});
+
+test('filesystem-limited names use stable distinct suffixes without losing full titles',t=>{
+  const {store}=fixture(t),title=('多语言研究 🧑🏽‍🔬 ').repeat(40)+'Complete ending';
+  const one=store.create({title}),two=store.create({title:title+' Different'}),duplicate=store.create({title});
+  for(const note of [one,two,duplicate]){
+    assert.match(note.relative,/ ~[a-f0-9]{12}(?: - [a-f0-9]{8})?\.md$/);
+    assert.equal(note.relative.isWellFormed(),true);assert.ok(path.basename(note.relative).length<=255);
+    if(process.platform==='win32')assert.ok(store.resolve(note.relative).length<=259);
+    const saved=store.save({id:note.id,version:note.version,base:note.content,content:'Text'}).note;
+    assert.equal(saved.title,note.title);assert.equal(saved.content,'Text');
+  }
+  assert.equal(one.title,title);assert.equal(duplicate.title,title);assert.notEqual(one.relative,two.relative);assert.notEqual(one.relative,duplicate.relative);
+  const {noteFilename}=require('../electron/note-filename.cjs');
+  assert.equal(noteFilename(store.root,title),one.relative);
+  const external=store.resolve('A deliberate external rename.md');fs.renameSync(store.resolve(one.relative),external);
+  assert.equal(store.get(one.id).title,'A deliberate external rename');
+});
+
+test('reserved filenames and sanitized characters never alter note titles',t=>{
+  const {store}=fixture(t);
+  for(const title of ['CON','LPT1','COM¹','NUL.txt','CON .txt','.hidden','Analysis: input/output?']){
+    const note=store.create({title});assert.equal(note.title,title);assert.equal(fs.existsSync(store.resolve(note.relative)),true);
+    assert.doesNotMatch(path.basename(note.relative),/^[.]|^(?:CON|LPT1|COM¹|NUL)(?:\.|$)/i);
+  }
+  const note=store.create({title:'A:B'}),renamed=store.rename({id:note.id,name:'A/B'});
+  assert.equal(renamed.relative,note.relative);assert.equal(renamed.title,'A/B');assert.equal(renamed.content,'');
+});
+
+test('Windows path budget shortens only filenames and refuses unusably deep directories', {skip:process.platform!=='win32'},t=>{
+  const {store}=fixture(t),{noteFilename}=require('../electron/note-filename.cjs');
+  const folder='Deep category '.repeat(8).slice(0,Math.max(1,218-store.root.length-1));
+  const title='A long title that belongs intact to a deeply categorized document despite its shorter filename';
+  const note=store.create({title,category:folder});
+  assert.equal(note.title,title);assert.ok(store.resolve(note.relative).length<=259);assert.match(note.relative,/ ~[a-f0-9]{12}\.md$/);
+  const saved=store.save({id:note.id,version:note.version,base:note.content,content:'Deeply nested notes'}).note;
+  assert.equal(saved.title,title);assert.equal(saved.content,'Deeply nested notes');
+  const tooDeep=path.join(store.root,'x'.repeat(245-store.root.length));
+  assert.throws(()=>noteFilename(tooDeep,title),/路径过长/);
+});
+
+test('legacy truncated titles recover without changing paths or handwritten text',t=>{
+  const {store}=fixture(t),title='A comprehensive '.repeat(12)+'original paper title',legacy=title.slice(0,110),file=store.resolve(legacy+'.md');
+  fs.writeFileSync(file,'Handwritten notes remain unchanged');store.associations.register(file,'legacy-title',doc.id);
+  const stat=fs.statSync(file),note=store.create({document:{...doc,title}});
+  assert.equal(note.title,title);assert.equal(note.relative,legacy+'.md');assert.equal(note.content,'Handwritten notes remain unchanged');
+  assert.equal(fs.statSync(file).mtimeMs,stat.mtimeMs);
+  const saved=store.save({id:note.id,version:note.version,base:note.content,content:'# My own title\nHandwritten notes remain unchanged'}).note;
+  assert.equal(saved.title,'My own title');assert.equal(store.create({document:{...doc,title}}).title,'My own title');
+});
+
+test('Obsidian templates receive full titles and standalone migration preserves title metadata',t=>{
+  const {store,root}=fixture(t),vault=path.join(root,'Vault'),title='Long research paper title '.repeat(20);
+  fs.mkdirSync(path.join(vault,'Templates'),{recursive:true});fs.writeFileSync(path.join(vault,'Templates','Paper.md'),'# {{title}}\n');
+  store.configure({mode:'obsidian',vault,notesFolder:'03Literature',templateFile:'Templates/Paper.md'});
+  const note=store.create({document:{...doc,title}});assert.equal(note.content,'# '+title+'\n');assert.equal(note.title,title);
+  const saved=store.save({id:note.id,version:note.version,base:note.content,content:'Only handwritten prose'}).note;assert.equal(saved.title,title);
+  store.configure({mode:'standalone',standaloneRoot:path.join(root,'Independent')},true);
+  assert.equal(store.get(note.id).title,title);assert.equal(store.get(note.id).content,'Only handwritten prose');
+});

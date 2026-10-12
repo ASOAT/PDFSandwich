@@ -5,11 +5,11 @@ const path=require('node:path');
 const vm=require('node:vm');
 
 test('companion shares folder settings, validates paths and opens stable document and note links',async()=>{
-  const files=new Map([['.pdfsandwich/config.json',JSON.stringify({version:1,notesFolder:'Research'})]]),opened=[],notices=[],intervals=[];
+  const files=new Map([['.pdfsandwich/config.json',JSON.stringify({version:1,notesFolder:'Research'})]]),opened=[],notices=[],intervals=[],events={};
   const note={path:'Research/example.md'};
   const adapter={exists:async p=>files.has(p),read:async p=>files.get(p),write:async(p,s)=>files.set(p,s),mkdir:async p=>files.set(p,'')};
   class Plugin{constructor(app){this.app=app;this.commands=[];}addSettingTab(){}addCommand(c){this.commands.push(c);}registerObsidianProtocolHandler(name,fn){this.protocol=fn;}registerEvent(){}registerInterval(){}}
-  const app={vault:{adapter,getMarkdownFiles:()=>[note],on:()=>{}},workspace:{getActiveFile:()=>note,getLeaf:()=>({openFile:async file=>opened.push(file.path)}),on:()=>{}},metadataCache:{getFileCache:()=>({frontmatter:{pdfsandwich_document_id:'document-123',pdfsandwich_note_id:'note-123'}})}};
+  const app={vault:{adapter,getMarkdownFiles:()=>[note],on:(name,handler)=>events[name]=handler},workspace:{getActiveFile:()=>note,getLeaf:()=>({openFile:async file=>opened.push(file.path)}),on:()=>{}},metadataCache:{getFileCache:()=>({frontmatter:{pdfsandwich_document_id:'document-123',pdfsandwich_note_id:'note-123'}})}};
   const context={module:{exports:{}},require:()=>({Plugin,PluginSettingTab:class{},Setting:class{},FuzzySuggestModal:class{},Notice:class{constructor(value){notices.push(value);}},normalizePath:p=>p.replace(/\\/g,'/'),TFile:class{}}),window:{setInterval:fn=>intervals.push(fn),open:link=>opened.push(link)},console};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../obsidian-plugin/main.js'),'utf8'),context);
   const plugin=new context.module.exports(app);await plugin.onload();assert.equal(plugin.settings.notesFolder,'Research');
@@ -20,4 +20,12 @@ test('companion shares folder settings, validates paths and opens stable documen
   assert.equal(plugin.commands[0].checkCallback(true),true);plugin.commands[0].checkCallback(false);assert.equal(opened[0],'pdfsandwich://document/document-123?page=1');
   await plugin.protocol({note:'note-123'});assert.equal(opened[1],note.path);
   app.metadataCache.getFileCache=()=>({frontmatter:{}});files.set('.pdfsandwich/notes-index.json',JSON.stringify({version:1,notes:{'note-123':{path:note.path,documentId:'document-123'}}}));await plugin.readIndex();assert.equal(plugin.commands[0].checkCallback(true),true);await plugin.protocol({note:'note-123'});assert.equal(opened.at(-1),note.path);
+  const indexFile='.pdfsandwich/notes-index.json',fullTitle='Complete document title '.repeat(20),record={path:note.path,documentId:'document-123',title:fullTitle,identity:'file-identity',hash:'content-hash',modified:123};
+  files.set(indexFile,JSON.stringify({version:1,notes:{'note-123':record,'unrelated':{path:'Other.md',title:'Keep me'}}}));
+  await events.rename({path:'Moved'},'Research');
+  let index=JSON.parse(files.get(indexFile)).notes;
+  assert.equal(index['note-123'].path,'Moved/example.md');assert.equal(index['note-123'].title,fullTitle);assert.equal(index['note-123'].identity,record.identity);assert.equal(index.unrelated.title,'Keep me');
+  await events.rename({path:'Moved/Deliberately renamed.md'},'Moved/example.md');
+  index=JSON.parse(files.get(indexFile)).notes;
+  assert.equal(index['note-123'].path,'Moved/Deliberately renamed.md');assert.equal(index['note-123'].title,undefined);assert.equal(index['note-123'].documentId,'document-123');assert.equal(index['note-123'].hash,record.hash);
 });

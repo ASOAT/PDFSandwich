@@ -3,6 +3,77 @@ import copy
 import re
 
 
+def protect_overhead_accents(page, math_fonts):
+    """Attach separate accent glyphs to the covered symbol before classification.
+
+    PDF drawing order often puts a wide hat on the preceding text line, while
+    the letters below it use a normal Roman font. Geometric ownership, not
+    neighboring Unicode text or a vocabulary of abbreviations, binds the atom.
+    """
+    from layout_preservation import union_box
+    for paragraph in page.pdf_paragraph:
+        lines=[c.pdf_line for c in paragraph.pdf_paragraph_composition if c.pdf_line]
+        if not lines:continue
+        original_chars={id(line):list(line.pdf_character) for line in lines}
+        accents=[];runs=[]
+        for line in lines:
+            run=[]
+            for char in line.pdf_character:
+                text=char.char_unicode or '';box=visual(char);size=char.pdf_style.font_size
+                known=(text in ('^','ˆ','̂','˜','̃','¯','̄','→','⃗','ˇ','˘','˙','˚','¨','̈')
+                       or (char.pdf_style.font_id in math_fonts and text.startswith('(cid:')))
+                if known and .15*size<box.x2-box.x<8*size and 0<box.y2-box.y<.42*size:
+                    accents.append((line,char))
+                letter=text.isalnum() and box.y2-box.y>=size*.45
+                if run:
+                    last=run[-1];prev=visual(last)
+                    contiguous=(letter and char.xobj_id==last.xobj_id and char.pdf_style.font_id==last.pdf_style.font_id
+                                and abs(char.box.y-last.box.y)<size*.2 and -.1*size<=box.x-prev.x2<size*.4)
+                    if not contiguous:runs.append((line,run));run=[]
+                if letter:run.append(char)
+            if run:runs.append((line,run))
+        moved=set();moved_accents=set()
+        for number,(accent_line,accent) in enumerate(accents):
+            a=visual(accent);choices=[]
+            for host_line,run in runs:
+                if len(run)>16 or run[0].xobj_id!=accent.xobj_id:continue
+                b=union_box(run);size=max(c.pdf_style.font_size for c in run)
+                overlap=min(a.x2,b.x2)-max(a.x,b.x)
+                gap=a.y-b.y2
+                if (overlap>=min(a.x2-a.x,b.x2-b.x)*.65 and overlap>=(b.x2-b.x)*.55
+                        and -.15*size<=gap<=.6*size
+                        and abs((a.x+a.x2)-(b.x+b.x2))<size*.8
+                        and a.x>=b.x-size*.5 and a.x2<=b.x2+size*.5):
+                    choices.append((abs(gap)+abs((a.x+a.x2)-(b.x+b.x2)),host_line,run))
+            if not choices:continue
+            _,host_line,run=min(choices,key=lambda item:item[0])
+            identity=next((c.formula_layout_id for c in run if c.formula_layout_id),-150000-number)
+            for char in [*run,accent]:char.formula_layout_id=identity
+            accent_line.pdf_character=[c for c in accent_line.pdf_character if c is not accent]
+            stop=next(i for i,c in enumerate(host_line.pdf_character) if c is run[-1])+1
+            host_line.pdf_character.insert(stop,accent)
+            moved.add(id(accent_line));moved.add(id(host_line))
+            moved_accents.add(id(accent))
+        if moved:
+            retained=[]
+            for comp in paragraph.pdf_paragraph_composition:
+                line=comp.pdf_line
+                if line and id(line) in moved:
+                    # A parser-generated gap between two detached hats does
+                    # not belong to the prose line after both hats are moved.
+                    old=original_chars[id(line)];orphan_gaps=set()
+                    for i,char in enumerate(old):
+                        if (char.char_unicode or '').strip():continue
+                        left=next((c for c in reversed(old[:i]) if (c.char_unicode or '').strip()),None)
+                        right=next((c for c in old[i+1:] if (c.char_unicode or '').strip()),None)
+                        if id(left) in moved_accents and id(right) in moved_accents:orphan_gaps.add(id(char))
+                    line.pdf_character=[c for c in line.pdf_character if id(c) not in orphan_gaps]
+                    if not any((c.char_unicode or '').strip() for c in line.pdf_character):continue
+                    line.box=union_box(line.pdf_character)
+                retained.append(comp)
+            paragraph.pdf_paragraph_composition=retained
+
+
 def protect_inline_badges(page):
     """Keep a compact numbered badge and its vector background in one atom.
 

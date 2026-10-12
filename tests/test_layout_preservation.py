@@ -363,3 +363,58 @@ def test_italic_translation_materializes_lazy_graphics_before_adding_shear():
     commands=chars[0].pdf_style.graphic_state.passthrough_per_char_instruction
     assert commands.startswith(str(instruction)) and '0.212557' in commands and commands.endswith(' cm')
     assert style.graphic_state.passthrough_per_char_instruction is instruction
+
+
+def test_wide_accents_attach_by_geometry_across_lines_without_word_dictionary():
+    from layout_atoms import protect_overhead_accents
+    from layout_preservation import characters
+    for symbol,accent_text in [('ABC','(cid:31)'),('XY','ˆ'),('q','→'),('uvwx','̃')]:
+        host=line('Use '+symbol+' and plain.',x=40,y=300)
+        base=host.pdf_character[4:4+len(symbol)]
+        for c in base:c.pdf_style.font_id='roman'
+        # The accent is emitted first, on a separate parser line. Its glyph
+        # drawing box is tall, but the actual ink is a thin shape overhead.
+        left,right=base[0].box.x,base[-1].box.x2
+        accent=line('^',x=left,y=305,font='math').pdf_character[0]
+        accent.char_unicode=accent_text
+        accent.box=Box(left,305,right,315)
+        accent.visual_bbox=VisualBbox(box=Box(left,311,right,313))
+        p=paragraph(PdfLine(box=accent.box,pdf_character=[accent]),host)
+        page=Page(pdf_paragraph=[p]);before={id(c):tuple((c.box.x,c.box.y,c.box.x2,c.box.y2)) for c in characters(p)}
+        protect_overhead_accents(page,{'math'})
+        assert len(p.pdf_paragraph_composition)==1
+        assert host.pdf_character[4+len(symbol)] is accent
+        identity=accent.formula_layout_id
+        assert identity and all(c.formula_layout_id==identity for c in base)
+        assert all(not c.formula_layout_id for c in host.pdf_character if c is not accent and c not in base)
+        assert before=={id(c):tuple((c.box.x,c.box.y,c.box.x2,c.box.y2)) for c in characters(p)}
+
+
+def test_multiple_accents_drop_only_orphan_gap_and_do_not_capture_previous_line_minus():
+    from layout_atoms import protect_overhead_accents
+    first=line('AB and CD',x=40,y=300)
+    for c in first.pdf_character:
+        if c.char_unicode in 'ABCD':c.pdf_style.font_id='roman'
+    accents=line('^ ^',x=40,y=305,font='math')
+    a,space,b=accents.pdf_character
+    for char,x in ((a,40),(b,75)):
+        char.box=Box(x,305,x+10,315);char.visual_bbox=VisualBbox(box=Box(x,311,x+10,313))
+    space.box=Box(50,305,75,315)
+    p=paragraph(accents,first);protect_overhead_accents(Page(pdf_paragraph=[p]),{'math'})
+    assert len(p.pdf_paragraph_composition)==1
+    assert space not in first.pdf_character
+    assert ''.join(c.char_unicode for c in first.pdf_character)=='AB^ and CD^'
+    base=line('X',x=40,y=300)
+    minus=line('-',x=40,y=311,font='math').pdf_character[0]
+    minus.visual_bbox=VisualBbox(box=Box(40,312,45,313))
+    p=paragraph(PdfLine(box=minus.box,pdf_character=[minus]),base)
+    protect_overhead_accents(Page(pdf_paragraph=[p]),{'math'})
+    assert not minus.formula_layout_id and len(p.pdf_paragraph_composition)==2
+
+
+def test_latin_modern_math_fonts_are_math_but_roman_body_is_not():
+    p=paragraph(line('Ordinary Roman text with equations.',font='body'))
+    page=Page(pdf_paragraph=[p],pdf_font=[PdfFont(font_id='body',name='ABC+LMRoman10-Regular'),
+                PdfFont(font_id='math',name='ABC+LMMathItalic10-Regular'),
+                PdfFont(font_id='accent',name='ABC+LMMathExtension10-Regular')])
+    assert math_fonts(page)==({'math','accent'},set())

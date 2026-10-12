@@ -22,13 +22,16 @@ class NoteIndex {
     }
     const validId=value=>typeof value==='string'&&/^[\w-]{1,128}$/.test(value)&&!['__proto__','constructor','prototype'].includes(value);
     const id=match?.[0]||(validId(legacy.pdfsandwich_note_id)?legacy.pdfsandwich_note_id:randomUUID());
-    const record={path:relative,documentId:match?.[1].documentId||(validId(legacy.pdfsandwich_document_id)?legacy.pdfsandwich_document_id:''),identity,hash:digest,modified:stat.mtimeMs};
+    // Keep a title independent of a shortened filename. An external filename
+    // rename is intentional; a move between folders retains the title.
+    const title=match&&path.basename(match[1].path)===path.basename(relative)?match[1].title:undefined;
+    const record={path:relative,documentId:match?.[1].documentId||(validId(legacy.pdfsandwich_document_id)?legacy.pdfsandwich_document_id:''),...(typeof title==='string'?{title}:{}),identity,hash:digest,modified:stat.mtimeMs};
     if(JSON.stringify(this.records[id])!==JSON.stringify(record)){this.records[id]=record;this.pending[id]=record;}
-    return {id,documentId:record.documentId};
+    return {id,documentId:record.documentId,title:record.title};
   }
-  register(file,id,documentId='') {
+  register(file,id,documentId='',title) {
     const stat=fs.statSync(file),content=fs.readFileSync(file);
-    const record={path:this.relative(file),documentId,identity:stat.ino?`${stat.dev}:${stat.ino}:${stat.birthtimeMs}`:'',hash:createHash('sha256').update(content).digest('hex'),modified:stat.mtimeMs};
+    const record={path:this.relative(file),documentId,...(typeof title==='string'?{title}:{}),identity:stat.ino?`${stat.dev}:${stat.ino}:${stat.birthtimeMs}`:'',hash:createHash('sha256').update(content).digest('hex'),modified:stat.mtimeMs};
     this.records[id]=record;this.pending[id]=record;this.flush();
   }
   flush() {
