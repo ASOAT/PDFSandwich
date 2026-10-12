@@ -82,6 +82,19 @@ def citation(text, tail=False):
     return all(re.fullmatch(r'(?:see\s+|e\.g\.,?\s*)?[A-ZÀ-Ž][^\d(){}]{1,100},\s*(?:19|20)\d{2}[a-z]?(?:,\s*(?:Lemma|Theorem|Section|Proposition|Corollary|Eq\.?|pp?\.)\s+[\w.\-–]+)?',part.strip()) for part in parts)
 
 
+def model_code(text):
+    """Recognize a compact bracketed identifier, never a prose phrase.
+
+    Mixed-case letter/digit labels can look like English words to a model
+    (e.g. ``In1``). Requiring one short token with both kinds of characters
+    leaves ordinary parenthetical prose such as ``In 2025`` translatable.
+    Style boundaries do not change the identity of the printed token.
+    """
+    text=visible(text).strip()
+    return (len(text)<=24 and bool(re.search(r'\d',text))
+            and bool(re.fullmatch(r'[A-Za-z][A-Za-z\d]*(?:[-_.][A-Za-z\d]+)*',text)))
+
+
 def protected_ranges(source):
     """Yield nonoverlapping (start,end,inner) groups; inner=None is literal.
 
@@ -108,7 +121,7 @@ def protected_ranges(source):
                 _,a=stack.pop()
                 if not stack:
                     inner=source[a+1:i]
-                    literal=citation(inner) or not re.search(r'[A-Za-z]{2}',visible(inner)) or bool(re.fullmatch(r'[A-Z][A-Z\d-]{1,14}',visible(inner)))
+                    literal=citation(inner) or model_code(inner) or not re.search(r'[A-Za-z]{2}',visible(inner)) or bool(re.fullmatch(r'[A-Z][A-Z\d-]{1,14}',visible(inner)))
                     end=i+1
                     if citation(inner) and source[end:end+1]=='.':
                         end+=1

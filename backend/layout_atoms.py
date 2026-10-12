@@ -40,9 +40,17 @@ def protect_overhead_accents(page, math_fonts):
                 b=union_box(run);size=max(c.pdf_style.font_size for c in run)
                 overlap=min(a.x2,b.x2)-max(a.x,b.x)
                 gap=a.y-b.y2
-                if (overlap>=min(a.x2-a.x,b.x2-b.x)*.65 and overlap>=(b.x2-b.x)*.55
+                # A normal hat is often much narrower than a single wide
+                # letter (omega, m, w). Coverage of the whole base is needed
+                # for a multi-letter wide accent, not for a centered accent
+                # over one glyph. Keep the center check tighter for this case
+                # so a neighboring symbol cannot claim the hat.
+                single=len(run)==1
+                centered=abs((a.x+a.x2)-(b.x+b.x2))<(min(size*.8,(b.x2-b.x)*.8) if single else size*.8)
+                covered=single or overlap>=(b.x2-b.x)*.55
+                if (overlap>=min(a.x2-a.x,b.x2-b.x)*.65 and covered
                         and -.15*size<=gap<=.6*size
-                        and abs((a.x+a.x2)-(b.x+b.x2))<size*.8
+                        and centered
                         and a.x>=b.x-size*.5 and a.x2<=b.x2+size*.5):
                     choices.append((abs(gap)+abs((a.x+a.x2)-(b.x+b.x2)),host_line,run))
             if not choices:continue

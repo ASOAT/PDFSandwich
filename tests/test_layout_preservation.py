@@ -412,6 +412,53 @@ def test_multiple_accents_drop_only_orphan_gap_and_do_not_capture_previous_line_
     assert not minus.formula_layout_id and len(p.pdf_paragraph_composition)==2
 
 
+def test_narrow_accents_bind_single_wide_letters_without_changing_glyph_geometry():
+    from layout_atoms import protect_overhead_accents
+    from layout_preservation import characters
+    # Caption-sized omega is only 0.46 em tall and its hat covers 53% of the
+    # glyph. Roman and bold wide letters can have even narrower accents.
+    for symbol,width,height,hat_width,size,font in [('ω',5.665226,3.903840,2.997743,8.4682,'math'),
+                                                  ('w',9,4.7,3,10,'roman'),
+                                                  ('m',10,5,2,10,'bold')]:
+        host=line(symbol+', and x',x=40,y=300,font=font)
+        base=host.pdf_character[0]
+        base.pdf_style.font_size=size
+        base.box=Box(40,300,40+width,300+size)
+        base.visual_bbox=VisualBbox(box=Box(40,300,40+width,300+height))
+        hat=line('ˆ',x=40,y=300,font='accent').pdf_character[0]
+        hat.pdf_style.font_size=size
+        left=40+(width-hat_width)/2
+        hat.visual_bbox=VisualBbox(box=Box(left,300+height+.5,left+hat_width,302+height))
+        # Parser order is hat, letter, punctuation; the shared atom must keep
+        # its original PDF drawing coordinates after ownership is resolved.
+        host.pdf_character.insert(0,hat)
+        p=paragraph(host);page=Page(pdf_paragraph=[p])
+        before={id(c):(c.box.x,c.box.y,c.box.x2,c.box.y2) for c in characters(p)}
+        protect_overhead_accents(page,{'math'})
+        assert base.formula_layout_id and base.formula_layout_id==hat.formula_layout_id
+        assert host.pdf_character[:2]==[base,hat]
+        assert not any(c.formula_layout_id for c in host.pdf_character[2:])
+        assert before=={id(c):(c.box.x,c.box.y,c.box.x2,c.box.y2) for c in characters(p)}
+        protect_overhead_accents(page,{'math'})
+        assert host.pdf_character[:2]==[base,hat]
+        assert len(list(characters(p)))==len(before)
+
+
+def test_narrow_accent_does_not_capture_word_neighbor_or_another_pdf_object():
+    from layout_atoms import protect_overhead_accents
+    # A narrow hat over one part of a word is not a wide accent over the word.
+    for text,hat_x,hat_y,xobj in [('word',40,311,0),('m',44,311,0),
+                                ('m',41,325,0),('m',41,311,1)]:
+        host=line(text,x=40,y=300)
+        hat=line('ˆ',x=hat_x,y=305,font='accent').pdf_character[0]
+        hat.xobj_id=xobj
+        hat.visual_bbox=VisualBbox(box=Box(hat_x,hat_y,hat_x+2,hat_y+1.5))
+        p=paragraph(PdfLine(box=hat.box,pdf_character=[hat]),host)
+        protect_overhead_accents(Page(pdf_paragraph=[p]),set())
+        assert not hat.formula_layout_id
+        assert not any(c.formula_layout_id for c in host.pdf_character)
+
+
 def test_latin_modern_math_fonts_are_math_but_roman_body_is_not():
     p=paragraph(line('Ordinary Roman text with equations.',font='body'))
     page=Page(pdf_paragraph=[p],pdf_font=[PdfFont(font_id='body',name='ABC+LMRoman10-Regular'),
