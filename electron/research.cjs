@@ -18,8 +18,9 @@ function createResearch({app, BrowserWindow, dialog, shell, clipboard, Clipboard
   }
   const broadcast = event => { for (const window of [getWindow(),...windows]) if(window&&!window.isDestroyed())window.webContents.send('pdfsandwich:event',event); };
   const program = process.env.PDFSANDWICH_DATA_DIR ? userDir() : app.isPackaged ? path.dirname(app.getPath('exe')) : root;
+  const notesStorage={fallbackRoot:path.join(userDir(),'Notes')};
   let notesError = '', notes;
-  try { notes = new NotesStore(path.join(userDir(),'notes-settings.json'),path.join(program,'Notes'),broadcast); }
+  try { notes = new NotesStore(path.join(userDir(),'notes-settings.json'),path.join(program,'Notes'),broadcast,notesStorage); }
   catch(error) { notesError=error.message; }
   const store = () => { if(!notes)throw new Error(notesError || '笔记目录无法访问。');return notes; };
   function asset(file) { const id=crypto.createHash('sha256').update(file).digest('hex'); assets.set(id,file);return `pdfsandwich://asset/${id}`; }
@@ -76,7 +77,16 @@ function createResearch({app, BrowserWindow, dialog, shell, clipboard, Clipboard
         if(mode==='obsidian') {changes.vault=folder;const shared=path.join(folder,'.pdfsandwich','config.json');if(fs.existsSync(shared))changes.notesFolder=JSON.parse(fs.readFileSync(shared,'utf8')).notesFolder||'Papers';}
         else changes.standaloneRoot=folder;
       }
-      if(!notes){const configFile=path.join(userDir(),'notes-settings.json');if(fs.existsSync(configFile))fs.copyFileSync(configFile,configFile+'.recovery');fs.writeFileSync(configFile,JSON.stringify({...config,...changes}));notes=new NotesStore(configFile,path.join(program,'Notes'),broadcast);notesError='';return notes.settings();}
+      if(!notes){
+        const configFile=path.join(userDir(),'notes-settings.json'),previous=fs.existsSync(configFile)?fs.readFileSync(configFile):null;
+        if(previous)fs.copyFileSync(configFile,configFile+'.recovery');
+        let recovered;
+        try {
+          fs.mkdirSync(path.dirname(configFile),{recursive:true});fs.writeFileSync(configFile,JSON.stringify({...config,...changes}));
+          recovered=new NotesStore(configFile,path.join(program,'Notes'),broadcast,notesStorage);
+          const result=recovered.settings();notes=recovered;notesError='';return result;
+        } catch(error) {recovered?.dispose();if(previous)fs.writeFileSync(configFile,previous);else if(fs.existsSync(configFile))fs.unlinkSync(configFile);throw error;}
+      }
       if(migrate){const answer=await dialog.showMessageBox(getWindow(),{type:'question',buttons:['取消','复制并切换'],defaultId:0,cancelId:0,message:'将当前笔记和附件复制到目标文件夹？',detail:'原目录完整保留；目标已有不同内容的同名文件时会停止。'});if(answer.response!==1)return null;}
       return store().configure(changes,migrate);
     },

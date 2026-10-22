@@ -5,6 +5,7 @@ const YAML = require('yaml');
 const {NoteIndex}=require('./note-index.cjs');
 const {templateContent}=require('./note-template.cjs');
 const {noteFilename}=require('./note-filename.cjs');
+const {assertWritableDirectory,isPermissionError}=require('./storage.cjs');
 
 const hash = text => createHash('sha256').update(text).digest('hex');
 const slug = name => String(name || 'Untitled').replace(/[<>:"/\\|?*\x00-\x1f]/g, '-').replace(/[. ]+$/g, '').slice(0, 110) || 'Untitled';
@@ -66,12 +67,38 @@ function mergeAppend(base, local, remote) {
   return null;
 }
 
+function notesStorageError(error, folder) {
+  if(!isPermissionError(error))return error;
+  const friendly=new Error(`笔记目录没有写入权限：${folder}。请在“阅读与笔记”设置中选择可写文件夹；已有笔记保持原位置。`,{cause:error});
+  friendly.code=error.code;return friendly;
+}
+
 class NotesStore {
-  constructor(configFile, defaultRoot, onChange = () => {}) {
+  constructor(configFile, defaultRoot, onChange = () => {}, {fallbackRoot} = {}) {
     this.configFile = configFile; this.defaultRoot = path.resolve(defaultRoot); this.onChange = onChange;
     this.config = { mode: 'standalone', standaloneRoot: this.defaultRoot, vault: '', notesFolder: 'Papers', templateFile: '' };
     if (fs.existsSync(configFile)) Object.assign(this.config, JSON.parse(fs.readFileSync(configFile, 'utf8')));
-    this.watchers = []; this.timer = null; this.index = new Map(); this.connect();
+    this.watchers = []; this.timer = null; this.index = new Map();
+    // Only an unused default folder can move automatically. A nonempty Notes
+    // directory or a chosen folder/Vault must never disappear behind a new root.
+    let changed=false;
+    const initialRoot=path.resolve(this.config.standaloneRoot||this.defaultRoot);
+    try {
+      if(this.config.mode==='standalone'&&fallbackRoot&&within(this.defaultRoot,initialRoot)&&within(initialRoot,this.defaultRoot)) {
+        try {assertWritableDirectory(initialRoot);}
+        catch(error) {
+          if(!isPermissionError(error))throw error;
+          let entries;
+          try {entries=fs.readdirSync(initialRoot);}
+          catch(readError) {if(readError.code!=='ENOENT')throw error;entries=[];}
+          if(entries.length)throw error;
+          assertWritableDirectory(fallbackRoot);
+          this.config.standaloneRoot=path.resolve(fallbackRoot);changed=true;
+        }
+      }
+      this.connect();
+      if(changed)atomic(this.configFile,JSON.stringify(this.config,null,2));
+    } catch(error) {this.dispose();throw notesStorageError(error,this.root||initialRoot);}
   }
   settings() { return { ...this.config, root: this.root, attachmentDirectory:this.attachmentDirectory() }; }
   attachmentDirectory(noteRelative='', config=this.config, notesRoot=this.root) {
@@ -109,7 +136,8 @@ class NotesStore {
       }
       this.root = this.safeFolder(this.config.vault, this.config.notesFolder);
     } else this.root = path.resolve(this.config.standaloneRoot || this.defaultRoot);
-    fs.mkdirSync(this.root, { recursive: true });
+    try {assertWritableDirectory(this.root);}
+    catch(error) {throw notesStorageError(error,this.root);}
     this.associations=new NoteIndex(this.config.mode==='obsidian'?this.config.vault:this.root);
     this.index=new Map();this.scan();
     const changed = () => { clearTimeout(this.timer); this.timer = setTimeout(() => { try { this.scan(); this.onChange({ type: 'notes-changed' }); } catch (error) { this.onChange({ type: 'notes-error', error: error.message }); } }, 180); };
@@ -156,6 +184,9 @@ class NotesStore {
     if (!['standalone', 'obsidian'].includes(next.mode)) throw new Error('未知笔记模式。');
     if (next.mode === 'obsidian' && !fs.existsSync(next.vault)) throw new Error('请选择已存在的 Vault。');
     const nextRoot = next.mode === 'obsidian' ? this.safeFolder(next.vault, next.notesFolder) : path.resolve(next.standaloneRoot);
+    // Validate before changing the saved location or copying migration files.
+    try {assertWritableDirectory(nextRoot);}
+    catch(error) {throw notesStorageError(error,nextRoot);}
     if (migrate && nextRoot !== oldRoot) {
       if (within(oldRoot, nextRoot) || within(nextRoot, oldRoot)) throw new Error('迁移目录不能相互包含。');
       const files = this.walk(oldRoot, true), plans=new Map(files.map(relative=>[path.join(nextRoot,relative),{source:path.join(oldRoot,relative)}]));

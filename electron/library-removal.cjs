@@ -8,7 +8,10 @@ const canonical = file => path.resolve(file).toLowerCase();
 function removalFiles(library, item) {
   if (!item.managed) return [];
   if (path.basename(item.id) !== item.id || ['.', '..'].includes(item.id)) throw new Error('文献目录无效，未删除文件。');
-  const folder = path.join(library.data.storageRoot, item.id);
+  const roots = [library.data.storageRoot, ...(library.data.managedRoots || [])];
+  const storageRoot = roots.find(root=>canonical(path.join(root,item.id))===canonical(path.dirname(item.path)));
+  if (!storageRoot) throw new Error('PDF 不在此文献的库内目录中，未删除文件。可取消勾选“同时删除 PDF”后移除记录。');
+  const folder = path.join(storageRoot, item.id);
   const candidates = [...new Set([item.path, item.translationPath].filter(Boolean).map(file => path.resolve(file)))];
   const files = [];
   for (const file of candidates) {
@@ -18,7 +21,7 @@ function removalFiles(library, item) {
     }
     // Check directory links even when the PDF is already missing (retry case).
     if (fs.existsSync(folder)) {
-      if (fs.lstatSync(folder).isSymbolicLink() || canonical(fs.realpathSync(folder)) !== canonical(path.join(fs.realpathSync(library.data.storageRoot), item.id))) {
+      if (fs.lstatSync(folder).isSymbolicLink() || canonical(fs.realpathSync(folder)) !== canonical(path.join(fs.realpathSync(storageRoot), item.id))) {
         throw new Error('文献目录已重定向，未删除文件。');
       }
     }

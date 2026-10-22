@@ -422,11 +422,11 @@ Object.assign(actions,{
     if(!answer.canceled){
       const selected=path.resolve(answer.filePaths[0]).toLowerCase();
       const program=app.isPackaged?path.dirname(app.getPath('exe')):root;
-      if(['resources','locales'].some(name=>{const reserved=path.join(program,name).toLowerCase();return selected===reserved||selected.startsWith(reserved+path.sep);}))throw new Error('请选择程序资源目录以外的文件夹，例如软件文件夹中的“文献库”。');
+      if(['resources','locales'].some(name=>{const reserved=path.join(program,name).toLowerCase();return selected===reserved||selected.startsWith(reserved+path.sep);}))throw new Error('请选择程序资源目录以外、有写入权限的文件夹。');
       library.setStorageRoot(answer.filePaths[0]);
     }return library.snapshot();
   },
-  libraryFolder:async()=>{fs.mkdirSync(library.data.storageRoot,{recursive:true});await shell.openPath(library.data.storageRoot);},
+  libraryFolder:async()=>{const error=await shell.openPath(library.ensureStorage());if(error)throw new Error(error);},
   translationSaveRetry:async({copy=false})=>{if(copy&&doc){delete doc.translationFile;persist();}scheduleTranslationSave();await translationSaver.flush();return state();},
   translationReveal:()=>{if(doc?.translationFile&&fs.existsSync(doc.translationFile.path))shell.showItemInFolder(doc.translationFile.path);}
 });
@@ -443,8 +443,11 @@ app.whenReady().then(() => {
   try { apiKey = stored.secret ? safeStorage.decryptString(Buffer.from(stored.secret, 'base64')) : ''; } catch { apiKey = ''; }
   recent = readJson(path.join(userDir(), 'recent.json'), []);
   try {
-    const storage=process.env.PDFSANDWICH_DATA_DIR?path.join(userDir(),'Library'):path.join(app.isPackaged?path.dirname(app.getPath('exe')):root,'Library');
-    library=new Library(path.join(userDir(),'library.json'),storage);
+    const program=app.isPackaged?path.dirname(app.getPath('exe')):root;
+    const storage=process.env.PDFSANDWICH_DATA_DIR?path.join(userDir(),'Library'):path.join(program,'Library');
+    library=new Library(path.join(userDir(),'library.json'),storage,{fallbackRoot:path.join(userDir(),'Library'),defaultRoots:[storage,path.join(program,'Library'),path.join(program,'文献库')]});
+    // Lack of write access must not prevent opening existing library entries.
+    try{library.ensureStorage();}catch(error){library.storageError=error.message;}
     try{const changes=migrateEnglishLibrary(library,userDir());for(const item of recent){const moved=changes.find(change=>change.from===item.path);if(moved)item.path=moved.to;}if(changes.length)jsonWrite(path.join(userDir(),'recent.json'),recent);}catch(error){dialog.showErrorBox('文献库目录暂未更名',error.message);}
     library.migrate(recent);
   } catch(error){libraryError=error.message;}

@@ -1,12 +1,16 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
+const { assertWritableDirectory, isPermissionError } = require('./storage.cjs');
 
 const text = (value, limit) => String(value ?? '').trim().slice(0, limit);
 const canonical = file => path.resolve(file).toLocaleLowerCase('en-US');
 class Library {
-  constructor(file, defaultRoot = path.join(path.dirname(file),'library-files')) {
+  constructor(file, defaultRoot = path.join(path.dirname(file),'library-files'), options = {}) {
     this.file = file;
+    this.fallbackRoot = options.fallbackRoot && path.resolve(options.fallbackRoot);
+    this.defaultRoots = (options.defaultRoots || [defaultRoot]).map(canonical);
+    this.probeStorage = options.probeStorage || assertWritableDirectory;
     this.data = { version: 1, storageRoot: defaultRoot, collections: [], documents: [] };
     if (fs.existsSync(file)) {
       try { this.data = JSON.parse(fs.readFileSync(file, 'utf8')); }
@@ -22,7 +26,33 @@ class Library {
     fs.renameSync(temporary, this.file);
   }
   snapshot() {
-    return { storageRoot: this.data.storageRoot, collections: this.data.collections, documents: this.data.documents.map(item => ({ ...item, missing: !fs.existsSync(item.path) })) };
+    return { storageRoot: this.data.storageRoot, storageNotice: this.storageError || this.data.storageNotice || '', collections: this.data.collections, documents: this.data.documents.map(item => ({ ...item, missing: !fs.existsSync(item.path) })) };
+  }
+  storageFailure(error, folder) {
+    if (!isPermissionError(error)) return error;
+    return Object.assign(new Error(`无法写入文献库文件夹“${folder}”。请在文献库的“存储位置”中选择有写入权限的文件夹。已有文献保持原位。`, { cause:error }), { code:error.code });
+  }
+  changeStorageRoot(folder, mode, notice = '') {
+    const previous = { ...this.data }, next = path.resolve(folder);
+    const roots = [...new Set([...(this.data.managedRoots || []), this.data.storageRoot].map(root=>path.resolve(root)))];
+    this.data = { ...this.data, storageRoot:next, storageRootMode:mode, managedRoots:roots, storageNotice:notice };
+    try { this.save(); } catch(error) { this.data=previous;throw error; }
+    this.storageError='';
+    return next;
+  }
+  ensureStorage() {
+    const current=this.data.storageRoot;
+    try { this.probeStorage(current);this.storageError='';return current; }
+    catch(error) { return this.recoverDefaultStorage(error,current); }
+  }
+  recoverDefaultStorage(error, current = this.data.storageRoot) {
+      if (!isPermissionError(error) || this.data.storageRootMode==='custom' || !this.fallbackRoot ||
+          canonical(current)===canonical(this.fallbackRoot) || !this.defaultRoots.includes(canonical(current))) {
+        const failure=this.storageFailure(error,current);this.storageError=failure.message;throw failure;
+      }
+      try { this.probeStorage(this.fallbackRoot); }
+      catch(failure) { this.storageError=this.storageFailure(failure,this.fallbackRoot).message;throw this.storageFailure(failure,this.fallbackRoot); }
+      return this.changeStorageRoot(this.fallbackRoot,'default','原默认目录没有写入权限，新导入的文献将保存到当前用户的数据目录。已有文献保持原位。');
   }
   get(id) {
     const item = this.data.documents.find(item => item.id === id);
@@ -59,9 +89,15 @@ class Library {
       return known;
     }
     const id = known?.id || randomUUID();
-    const folder = path.join(this.data.storageRoot,id);
+    let folder = path.join(this.ensureStorage(),id);
+    try { fs.mkdirSync(folder,{recursive:true}); }
+    catch(error) {
+      if (!isPermissionError(error)) throw error;
+      // A directory policy can change between the write probe and mkdir.
+      this.recoverDefaultStorage(error);
+      folder=path.join(this.data.storageRoot,id);fs.mkdirSync(folder,{recursive:true});
+    }
     const destination = path.join(folder,path.basename(metadata.path));
-    fs.mkdirSync(folder,{recursive:true});
     fs.copyFileSync(metadata.path,destination,fs.constants.COPYFILE_EXCL);
     if (known) {
       known.path=destination; known.originalPath=metadata.path; known.managed=true;
@@ -74,8 +110,8 @@ class Library {
     this.save(); return known;
   }
   setStorageRoot(folder) {
-    if (this.data.documents.some(item => item.managed) && canonical(folder)!==canonical(this.data.storageRoot)) throw new Error('已有文件的文献库暂不支持迁移。当前文件位置保持不变。');
-    this.data.storageRoot=path.resolve(folder); this.save();
+    try { this.probeStorage(folder); } catch(error) { throw this.storageFailure(error,folder); }
+    this.changeStorageRoot(folder,'custom');
   }
   editDocument(id, changes) {
     const original = this.get(id);

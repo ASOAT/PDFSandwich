@@ -2,16 +2,16 @@
 
 Windows 中英对照 PDF 阅读与批注工具。默认使用免费的本地 HY-MT 专用英译中模型，提供成对的艺术明暗主题、文献库和实时 Markdown 笔记。
 
-[下载 v0.6.9](https://github.com/ASOAT/PDFSandwich/releases/tag/v0.6.9) · [产品介绍](https://asoat.github.io/PDFSandwich/) · [反馈问题](https://github.com/ASOAT/PDFSandwich/issues)
+[下载 v0.6.10](https://github.com/ASOAT/PDFSandwich/releases/tag/v0.6.10) · [产品介绍](https://asoat.github.io/PDFSandwich/) · [反馈问题](https://github.com/ASOAT/PDFSandwich/issues)
 
 ![PDFSandwich 中英对照阅读界面](docs/reader-light.png)
 
 ## 使用
 
-从 [GitHub Release](https://github.com/ASOAT/PDFSandwich/releases/latest) 下载 `PDFSandwich-Setup-0.6.9.exe`，适用于 Windows 10 / 11 x64。
+从 [GitHub Release](https://github.com/ASOAT/PDFSandwich/releases/latest) 下载 `PDFSandwich-Setup-0.6.10.exe`，适用于 Windows 10 / 11 x64。
 安装版不需要安装 Python、Node.js 或配置 API Key。当前安装包未签名，发布页附 SHA-256 校验文件、完整源码包和原创示例 PDF。
 
-1. 在文献库导入或拖入可选中文字的英文 PDF。导入时复制到统一文献库，默认位于软件文件夹下的 `Library`；初始文件保持不变。
+1. 在文献库导入或拖入可选中文字的英文 PDF。默认复制到软件文件夹下的 `Library`；默认目录没有写入权限时自动使用 `%APPDATA%/pdfsandwich/Library`。初始文件保持不变。
 2. 导入时检查文字层：中文文档、扫描件及无文字页不自动加载翻译服务；含 OCR 文字层的英文 PDF 可正常翻译。左侧原文、右侧中文。默认翻到哪里就优先翻译哪里；即使正在翻译整本，跳页也会让后台任务让出位置，先处理当前页，再继续邻页和剩余任务。
 3. 在任一侧滚动，另一侧跟随同一页及页内位置；顶部“同步阅读”可解除联动。
 4. 选择高亮、下划线、手绘或批注工具，在任一侧标记。高亮/下划线支持整段、多段和跨页拖选，按页对应并可一次撤销；英文侧未翻译页面的标记会在翻译后补上。中文侧跨页选择要求经过的页面已翻译。文字批注内容保持原样。
@@ -21,7 +21,7 @@ Windows 中英对照 PDF 阅读与批注工具。默认使用免费的本地 HY-
 
 ## Markdown 笔记与 Obsidian
 
-- 点击“阅读与笔记设置”，选择独立 Markdown 或 Obsidian Vault。独立模式默认 `软件文件夹/Notes`，可选择自己的文件夹；Obsidian 模式指定 Vault 与笔记子目录。两者使用同一套普通 `.md` 文件，不需要账户或 Obsidian 才能记笔记。
+- 点击“阅读与笔记设置”，选择独立 Markdown 或 Obsidian Vault。独立模式默认 `软件文件夹/Notes`；未使用的默认目录没有写入权限时使用 `%APPDATA%/pdfsandwich/Notes`，也可选择自己的文件夹。已有笔记和自选 Vault 不会自动搬移。两者使用同一套普通 `.md` 文件，不需要账户或 Obsidian 才能记笔记。
 - 阅读工具栏切换“双栏原文译文 / PDF 与笔记”。笔记栏可收起、拖动宽度，也可打开独立浮动窗口。
 - **默认实时编辑**：非当前编辑行直接呈现标题、加粗、斜体、引用、列表、表格、链接、图片和公式；点回相应内容即可修改 Markdown。另提供源码与只读视图。两种存储模式行为相同。
 - 每份文献默认关联一篇空白笔记，不强制生成 YAML 或正文。Obsidian 的 PDFSandwich 插件设置中可选择 Vault 内的 Markdown 模板，清除后恢复空文件。模板只用于新笔记，支持标题、作者、年份等变量；内部关联编号保存在 `.pdfsandwich/notes-index.json`，不占用 YAML。已有笔记打开时仅迁出两个旧编号，先保留备份。
@@ -31,7 +31,7 @@ Windows 中英对照 PDF 阅读与批注工具。默认使用免费的本地 HY-
 - 支持新建、搜索、重命名、分类和回收站删除。编辑停顿后自动保存；外部改动会重新载入或合并追加内容。重叠冲突保留双方文本和恢复副本，要求选择，不会直接覆盖外部手写内容。
 - 历史快照保留在笔记目录 `.pdfsandwich/history/`，冲突副本位于 `.pdfsandwich/conflicts/`。切换目录时可勾选复制迁移，原目录保留，同名冲突会停止。请备份笔记和附件；Obsidian 模式下两者可能位于 Vault 的不同目录。复制迁移时会携带引用的图片并调整相对路径。
 
-可选 [PDFSandwich Companion 插件](https://github.com/ASOAT/PDFSandwich/releases/download/v0.6.9/PDFSandwich-Obsidian-0.6.9.zip) 提供 Obsidian 内的目录设置、打开关联 PDF 和笔记定位。将压缩包中的 `pdfsandwich-companion` 放到 Vault 的 `.obsidian/plugins/`，重启 Obsidian 后在第三方插件中启用。未上架 Obsidian 社区插件市场；详情见 [插件说明](obsidian-plugin/README.md)。PDFSandwich 中设置的 Vault 子目录和插件共享同一份配置。Obsidian 自身的编辑器仍使用其原生实时预览设置。
+可选 [PDFSandwich Companion 插件](https://github.com/ASOAT/PDFSandwich/releases/download/v0.6.10/PDFSandwich-Obsidian-0.6.10.zip) 提供 Obsidian 内的目录设置、打开关联 PDF 和笔记定位。将压缩包中的 `pdfsandwich-companion` 放到 Vault 的 `.obsidian/plugins/`，重启 Obsidian 后在第三方插件中启用。未上架 Obsidian 社区插件市场；详情见 [插件说明](obsidian-plugin/README.md)。PDFSandwich 中设置的 Vault 子目录和插件共享同一份配置。Obsidian 自身的编辑器仍使用其原生实时预览设置。
 
 ## 文献库
 
@@ -41,7 +41,7 @@ Windows 中英对照 PDF 阅读与批注工具。默认使用免费的本地 HY-
 - 默认目录为 `Library`。已有默认中文目录在目标不存在时迁移并更新索引；自定义位置保留。目标同名目录已存在时不合并或覆盖。
 - 左侧建立分类和子分类，中间浏览、搜索和排序，右侧编辑标题、作者、年份、标签和文献备注。同一份 PDF 可属于多个分类；支持批量添加分类和标签。分类右侧的文件夹加号可直接新建子分类；右键“移至分类”按层级展开，通过“移至此分类”也可移入父分类。
 - 导入复制到 `软件文件夹/Library/文献编号/原文件名.pdf`。每份文献有独立子文件夹，同名 PDF 不互相覆盖；从同一路径重复导入复用已有条目。
-- 点击左下角“文献库存储位置”打开文件夹；导入第一份文献前可选择其他目录。已有文献的库暂不提供自动迁移。
+- 点击左下角“文献库存储位置”可查看实际目录或选择其他可写目录。更改位置仅影响后续导入；旧文献、译文与批注保持原位并继续列在库中。选择目录时会验证创建文件夹、写入和重命名权限。
 - “打开 PDF”会导入并开始阅读。旧版最近阅读记录继续显示，首次从文献库打开时复制入库，并继承能复用的阅读草稿与译文缓存。
 - **Ctrl+S 保存的是文献库中的原文副本**。导入前的初始文件不被改写。移出文献库时默认勾选“同时删除 PDF”，将库内 PDF 和已登记的译文移至系统回收站；取消勾选则只移除记录。初始导入文件、Markdown 笔记、附件和备份保留。删除分类不会删除文献。
 - 自动保存中文 PDF 默认关闭。开启后采用临时文件、外部修改检查和原子替换；同名文件已有时另存 `.zh (2).pdf`。已有译文被外部修改、移动或占用时提示重试或另存副本。
@@ -85,7 +85,7 @@ Gemini 免费额度预设需在 Google AI Studio 获取自己的密钥，受服�
 
 ## 数据与限制
 
-- 草稿、翻译缓存、离线语言模型及设置：`%APPDATA%/pdfsandwich/`。管理的原文副本默认在软件文件夹的 `Library`；自动保存的中文 PDF 与其同目录。
+- 草稿、翻译缓存、离线语言模型及设置：`%APPDATA%/pdfsandwich/`。管理的原文副本默认在软件文件夹的 `Library`；默认位置不可写时使用用户数据目录的 `Library`。自动保存的中文 PDF 与库内原文同目录。
 - BabelDOC 排版模型、字体与工作缓存：`%USERPROFILE%/.cache/babeldoc/`。
 - 云端密钥使用 Windows 系统保护后保存在本机设置中，不进入仓库。
 - 不支持扫描件 OCR、修改原文正文、数字签名编辑或密码解密。
@@ -143,7 +143,7 @@ node scripts/library-actions-ui.mjs
 node scripts/research-ui.mjs
 node scripts/live-notes-ui.mjs
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/installer-library-test.ps1
-# 先构建 0.6.9，并保留 release/0.5.0 的原安装包和 blockmap：
+# 先构建 0.6.10，并保留 release/0.5.0 的原安装包和 blockmap：
 $env:PDFSANDWICH_PREVIOUS_VERSION='0.5.0'
 node scripts/update-transfer-test.cjs
 # 设置 PDFSANDWICH_PRIORITY_PDF 为至少 26 页的测试 PDF 后：
@@ -162,7 +162,7 @@ UI 测试只修改测试 PDF 的副本，测试数据与缓存不提交。发布
 .venv/Scripts/python.exe scripts/create-icon.py
 npm run build:backend
 npm run build:licenses
-npm run dist -- '--config.directories.output=release/0.6.9'
+npm run dist -- '--config.directories.output=release/0.6.10'
 .venv/Scripts/python.exe scripts/package-plugin.py
 # 提交完整版本后生成匹配源码包：
 .venv/Scripts/python.exe scripts/source-bundle.py
@@ -172,7 +172,7 @@ npm run dist -- '--config.directories.output=release/0.6.9'
 构建会核验并应用 BabelDOC 0.6.2 的两处导入替换：用经等价测试的轻量运算完成字形聚类和灰度相似度检查，避免首次排版加载不需要的大型计算库。
 构建输出在 `release/`，不提交二进制文件、模型、密钥或文档缓存。
 可运行 `npm run clean:releases` 预览本机旧构建，再运行 `npm run clean:releases -- -Apply` 清理。工具保留当前版本，拒绝清理正在运行或包含链接的目录，跳过包含 PDF 或文献库的目录；不会删除 GitHub Release、模型或用户资料。
-Release 的 `PDFSandwich-0.6.9-source.zip` 同时提供项目构建脚本及所封装 AGPL 依赖的对应源代码；模型与 llama.cpp 运行时另行下载，不封装在安装包中。
+Release 的 `PDFSandwich-0.6.10-source.zip` 同时提供项目构建脚本及所封装 AGPL 依赖的对应源代码；模型与 llama.cpp 运行时另行下载，不封装在安装包中。
 
 ## 设计与验证
 

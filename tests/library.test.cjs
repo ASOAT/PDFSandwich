@@ -24,5 +24,5 @@ test('recent files migrate on first import and invalid edits are transactional',
   const item=library.importCopy(metadata);assert.equal(item.id,old.id);assert.equal(item.managed,true);
   const title=item.title;assert.throws(()=>library.editDocument(item.id,{title:'lost title',collections:['missing']}));assert.equal(item.title,title);
   const a=library.collection({name:'A'}),b=library.collection({name:'B',parentId:a.id});assert.throws(()=>library.collection({id:a.id,name:'A',parentId:b.id}));assert.equal(a.parentId,null);
-  assert.throws(()=>library.setStorageRoot(path.dirname(source)));assert.ok(fs.existsSync(item.path));
+  const retained=item.path;library.setStorageRoot(path.join(path.dirname(source),'new-library'));assert.equal(item.path,retained);assert.ok(fs.existsSync(item.path));
 });
