@@ -8,13 +8,14 @@ const data=await fs.mkdtemp(path.resolve('local-data/release-ui-'));
 await fs.symlink(path.resolve('local-data/models'),path.join(data,'models'),'junction');
 const file=path.join(data,'Learning from data.pdf');
 await fs.copyFile('tmp/pdfs/release-sample.pdf',file);
-const app=await electron.launch({...(exe?{executablePath:path.resolve(exe)}:{args:['.']}),cwd:root,
+const launchFlags=['--disable-features=CalculateNativeWinOcclusion','--disable-renderer-backgrounding'];
+const app=await electron.launch({...(exe?{executablePath:path.resolve(exe),args:launchFlags}:{args:['.',...launchFlags]}),cwd:root,
   env:{...process.env,PDFSANDWICH_DATA_DIR:data},timeout:60000});
 let page;
 try {
   page=await app.firstWindow();page.setDefaultTimeout(30000);const errors=[];
   page.on('pageerror',e=>errors.push(e.message));
-  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setContentSize(1500,960));
+  await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows()[0];win.setContentSize(1500,960);win.webContents.setBackgroundThrottling(false);win.setPosition(-4000,0);});
   await page.waitForFunction(()=>Boolean(window.pdfsandwich));
   const call=(op,args)=>page.evaluate(({op,args})=>window.pdfsandwich.call(op,args),{op,args});
   async function until(check,timeout=180000){const end=Date.now()+timeout;while(Date.now()<end){const s=await call('state');if(s.doc?.translations[0]?.status==='error')throw new Error(s.doc.translations[0].error);if(check(s))return s;await new Promise(r=>setTimeout(r,100));}throw new Error('State timed out');}

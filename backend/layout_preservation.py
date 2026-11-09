@@ -270,10 +270,14 @@ def install():
         from reference_layout import split_references, explicit_word_spaces
         from layout_atoms import split_numbered_lists, protect_inline_badges, protect_overhead_accents
         from prose_layout import join_fragmented_prose, join_fragmented_titles, preserve_author_rows
-        join_fragmented_titles(page)
-        join_fragmented_prose(page)
+        from layout_regions import checked_rewrite, preserve_figure_text
+        audit = getattr(self.translation_config, '_sandwich_region_audit', [])
+        self.translation_config._sandwich_region_audit = audit
+        preserve_figure_text(page)
+        for rewrite in (join_fragmented_titles, join_fragmented_prose):
+            audit.append(checked_rewrite(page, rewrite))
         preserve_author_rows(page)
-        split_references(page)
+        audit.append(checked_rewrite(page, split_references))
         split_numbered_lists(page)
         preserve_algorithms(page, *self._sandwich_fonts)
         protect_heading_number(page)

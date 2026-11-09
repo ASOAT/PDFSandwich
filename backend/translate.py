@@ -18,6 +18,7 @@ async def translate_request(request,send):
     engine=TextEngine(request,lambda message:send({'type':'progress','progress':0,'stage':message}))
     output=Path(request['output']);output.parent.mkdir(parents=True,exist_ok=True)
     temporary=str(output)+'.tmp'
+    region_audit=[]
     try:
         engine.control.check()
         scan=scan_profile(request['input'])
@@ -60,6 +61,7 @@ async def translate_request(request,send):
                         send({'type':'progress','progress':progress,'stage':stage});last=(progress,stage)
                 elif kind=='error':raise RuntimeError(event.get('error','翻译失败'))
                 elif kind=='finish':
+                    region_audit=getattr(config,'_sandwich_region_audit',[])
                     result=event['translate_result']
                     source=getattr(result,'no_watermark_mono_pdf_path',None) or getattr(result,'mono_pdf_path',None)
                     if not source or not Path(source).is_file():raise RuntimeError('翻译引擎未生成译文 PDF。')
@@ -79,6 +81,9 @@ async def translate_request(request,send):
         os.replace(temporary,output)
         report={'warnings':warnings,'repairedSegments':engine.repaired,'cachedSegments':engine.hits,'seconds':round(time.perf_counter()-started,2),'layout':'contents' if toc else 'babeldoc'}
         report['searchableScan']=bool(scan)
+        report['regionRewrites']={
+            'checked':len(region_audit),
+            'rejected':[item for item in region_audit if not item['accepted']]}
         output.with_name('quality.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
         send({'type':'finish','path':str(output),'warnings':len(warnings),'repairedSegments':engine.repaired,'seconds':report['seconds']})
     except (Exception, asyncio.CancelledError):

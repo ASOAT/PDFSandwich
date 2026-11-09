@@ -1,6 +1,76 @@
 """Recover numbered bibliography entries from glyph coordinates, not ML boxes."""
 import copy
 import re
+from dataclasses import dataclass
+
+
+_REFERENCE_SOURCE_LABELS = {'plain text', 'text', 'paragraph', 'paragraph_hybrid',
+                            'reference', 'reference_content', 'reference_hybrid',
+                            'fallback_line', 'tiny text'}
+
+
+@dataclass
+class _SourceLine:
+    chars: list
+    owner: object
+
+    @property
+    def visible(self):
+        return [c for c in self.chars if (c.char_unicode or '').strip()]
+
+
+def _reference_lines(page):
+    """Keep source line ownership: a citation inside prose is never an entry.
+
+    Detector paragraphs can span several bibliography entries or columns, but
+    their physical lines still provide the boundary that a page-wide glyph
+    search loses. Excluded roles remain barriers, not candidate text.
+    """
+    lines = []
+    for paragraph in page.pdf_paragraph:
+        for comp in paragraph.pdf_paragraph_composition:
+            if comp.pdf_line:
+                lines.append(_SourceLine(sorted(comp.pdf_line.pdf_character,
+                                                key=lambda c: c.box.x), paragraph))
+    # Standalone labels can survive an earlier classifier outside paragraphs.
+    loose = {}
+    for char in page.pdf_character:
+        key = (char.xobj_id, round(char.box.y / 1.5))
+        loose.setdefault(key, []).append(char)
+    lines.extend(_SourceLine(sorted(chars, key=lambda c: c.box.x), None)
+                 for chars in loose.values())
+    return lines
+
+
+def _line_markers(lines):
+    markers = []
+    for line in lines:
+        if line.owner is not None and line.owner.layout_label not in _REFERENCE_SOURCE_LABELS:
+            continue
+        chars = line.visible
+        if not chars or chars[0].char_unicode != '[':
+            continue
+        label = [chars[0]]
+        size = chars[0].pdf_style.font_size
+        for char in chars[1:6]:
+            if char.box.x-label[-1].box.x2 > size*.7:
+                break
+            label.append(char)
+            if char.char_unicode == ']':
+                break
+        match = re.fullmatch(r'\[(\d{1,4})\]', ''.join(c.char_unicode or '' for c in label))
+        if not match:
+            continue
+        head = label[0]
+        # A separate detector fragment can start with an inline citation. Check
+        # adjacent source lines too, without confusing the neighboring column.
+        preceded = any(c.box.x2 <= head.box.x and head.box.x-c.box.x2 < size*.7
+                       and abs(c.box.y-head.box.y) < size*.3
+                       and c.xobj_id == head.xobj_id
+                       for other in lines if other is not line for c in other.visible)
+        if not preceded:
+            markers.append((int(match[1]), head.box.y, label, line))
+    return markers
 
 
 def explicit_word_spaces(chars, visual=False):
@@ -35,52 +105,59 @@ def split_references(page):
     from layout_preservation import characters, union_box
     from babeldoc.format.pdf.document_il.il_version_1 import PdfParagraph, PdfLine, PdfParagraphComposition
     from babeldoc.format.pdf.document_il.utils.layout_helper import get_char_unicode_string
-    all_chars = list(page.pdf_character) + [c for p in page.pdf_paragraph for c in characters(p)]
-    # References use normal body baselines. Fold nearby superscripts into their
-    # line after the numbered margin has identified the bibliography column.
-    rows = []
-    for char in sorted(all_chars, key=lambda c: (-c.box.y, c.box.x)):
-        if not rows or abs(rows[-1][0]-char.box.y) > 1.5:
-            rows.append((char.box.y, []))
-        rows[-1][1].append(char)
-    markers = []
-    for y, chars in rows:
-        chars.sort(key=lambda c: c.box.x)
-        # Both columns can share a baseline and their gutter may be narrower
-        # than a fixed 18pt threshold. Find compact labels first, then validate
-        # repeated aligned margins and increasing numbers below.
-        for i,char in enumerate(chars):
-            if char.char_unicode!='[':continue
-            label=[char]
-            for candidate in chars[i+1:i+6]:
-                if candidate.box.x-label[-1].box.x2>char.pdf_style.font_size*.7:break
-                label.append(candidate)
-                if candidate.char_unicode==']':break
-            match=re.fullmatch(r'\[(\d{1,4})\]',''.join(c.char_unicode or '' for c in label))
-            if match:markers.append((int(match[1]),y,label))
+    if not page.cropbox:
+        return
+    source_lines = _reference_lines(page)
+    source_ids = [id(c) for line in source_lines for c in line.chars]
+    if len(source_ids) != len(set(source_ids)):
+        return  # Ownership is already ambiguous; do not amplify it.
+    markers = _line_markers(source_lines)
     columns = []
     for marker in markers:
         right = marker[2][-1].box.x2
-        column = next((col for col in columns if abs(col[0][2][-1].box.x2-right) < 6), None)
+        column = next((col for col in columns if
+                       col[0][2][0].xobj_id == marker[2][0].xobj_id and
+                       abs(col[0][2][-1].box.x2-right) < 6), None)
         if column is None:
             columns.append([marker])
         else:
             column.append(marker)
     columns = [sorted(col, key=lambda m: -m[1]) for col in columns if len(col) >= 3]
-    columns = [col for col in columns if all(a[0] < b[0] for a, b in zip(col, col[1:]))]
+    # A bibliography enumerates successive entries; increasing scattered
+    # citation numbers are not evidence of a bibliography region.
+    columns = [col for col in columns if all(a[0]+1 == b[0] for a, b in zip(col, col[1:]))]
     if not columns:
         return
     columns.sort(key=lambda col: col[0][2][0].box.x)
+    # Plan complete line transfers first. Never crop arbitrary right-hand
+    # pieces out of body text, captions, or equations to manufacture an entry.
     consumed = set()
     entries = []
     for column_index, column in enumerate(columns):
-        left = min(c.box.x for _, _, cs in column for c in cs)-1
-        right = min(c.box.x for _, _, cs in columns[column_index+1] for c in cs)-1 if column_index+1 < len(columns) else page.cropbox.box.x2
+        left = min(c.box.x for _, _, cs, _ in column for c in cs)-1
+        right = min(c.box.x for _, _, cs, _ in columns[column_index+1] for c in cs)-1 if column_index+1 < len(columns) else page.cropbox.box.x2
+        xobj_id = column[0][2][0].xobj_id
         column_entries = []
-        for index, (_, baseline, label) in enumerate(column):
+        for index, (_, baseline, label, _) in enumerate(column):
             size = label[0].pdf_style.font_size
             lower = column[index+1][1]+size*.65 if index+1 < len(column) else baseline-size*8
-            candidates = [c for c in all_chars if left <= c.box.x < right and lower < c.box.y <= baseline+size*.65]
+            selected = []
+            for source_line in source_lines:
+                if source_line.owner is not None and source_line.owner.layout_label not in _REFERENCE_SOURCE_LABELS:
+                    continue
+                visible = source_line.visible
+                if not visible or any(c.xobj_id != xobj_id for c in visible):
+                    continue
+                if min(c.box.x for c in visible) < left or max(c.box.x2 for c in visible) > right:
+                    continue
+                # Superscripts remain attached to their physical source line.
+                baseline_chars = [c for c in visible if c.pdf_style.font_size >= size*.8]
+                if not baseline_chars:
+                    continue
+                y = min(c.box.y for c in baseline_chars)
+                if lower < y <= baseline+size*.65:
+                    selected.append(source_line)
+            candidates = [c for source_line in selected for c in source_line.chars]
             # Do not absorb a page footer or following section into the last entry.
             if index+1 == len(column):
                 baselines = sorted({round(c.box.y, 1) for c in candidates}, reverse=True)
@@ -106,6 +183,10 @@ def split_references(page):
                     lines.append(PdfParagraphComposition(pdf_line=PdfLine(box=union_box(chars), pdf_character=chars)))
             if not lines:
                 continue
+            if any(id(c) in consumed for c in candidates):
+                # Ambiguous ownership leaves the page unchanged instead of
+                # rendering one glyph in more than one translated region.
+                return
             body = [c for line in lines for c in line.pdf_line.pdf_character]
             entry = PdfParagraph(box=union_box(body), pdf_style=copy.copy(body[0].pdf_style),
                                  pdf_paragraph_composition=lines, xobj_id=body[0].xobj_id,
@@ -121,8 +202,8 @@ def split_references(page):
                 p.box.x2 = width
     if not consumed:
         return
-    # Remove every consumed glyph from its old container, including fragments
-    # that the layout detector placed in separate paragraphs midway through a word.
+    # Commit the verified transfer. Recompute surviving geometry/text as well:
+    # stale bounds would otherwise remain an invisible obstruction to typesetting.
     page.pdf_character = [c for c in page.pdf_character if id(c) not in consumed]
     remaining = []
     for p in page.pdf_paragraph:
@@ -131,11 +212,15 @@ def split_references(page):
             if comp.pdf_line:
                 comp.pdf_line.pdf_character = [c for c in comp.pdf_line.pdf_character if id(c) not in consumed]
                 if comp.pdf_line.pdf_character:
+                    comp.pdf_line.box = union_box(comp.pdf_line.pdf_character)
                     compositions.append(comp)
             else:
                 compositions.append(comp)
         p.pdf_paragraph_composition = compositions
         if list(characters(p)):
+            if any(id(c) in consumed for line in source_lines if line.owner is p for c in line.chars):
+                p.box = union_box(list(characters(p)))
+                p.unicode = get_char_unicode_string(list(characters(p)))
             remaining.append(p)
     for entry, label in entries:
         remaining.append(entry)

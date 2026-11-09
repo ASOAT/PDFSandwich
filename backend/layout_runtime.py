@@ -12,7 +12,7 @@ _installed = False
 
 
 class LayoutTranslator:
-    name = 'pdfsandwich-v12'
+    name = 'pdfsandwich-v13'
     preserves_styles = True
     model = 'guarded-text'
     lang_in = 'en'
@@ -173,7 +173,8 @@ def install():
         if len(pdf) != 1:
             return subset_original(pdf, config, tag)
         config.raise_if_cancelled()
-        pdf.subset_fonts(fallback=False)
+        from font_subsetting import subset_fonts_preserving_legacy_encodings
+        subset_fonts_preserving_legacy_encodings(pdf)
         return pdf
 
     def save(pdf, output_path, translation_config, garbage=1, deflate=True,
