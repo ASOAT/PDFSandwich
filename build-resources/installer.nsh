@@ -1,5 +1,46 @@
 ; The user's managed PDF library lives next to the application. Never remove
 ; the installation directory recursively, during either updates or uninstall.
+; Old update clients may still pass /S. Keep the native progress page visible.
+!macro customInit
+  ${If} ${isUpdated}
+    SetSilent normal
+  ${EndIf}
+!macroend
+
+!macro customInstallMode
+  ${If} ${isUpdated}
+    ${If} $installMode == "all"
+      StrCpy $isForceMachineInstall "1"
+    ${Else}
+      StrCpy $isForceCurrentInstall "1"
+    ${EndIf}
+  ${EndIf}
+!macroend
+
+!macro customFinishPage
+  Function PDFSandwichStartAfterInstall
+    ${If} ${isUpdated}
+      StrCpy $1 "--updated"
+    ${Else}
+      StrCpy $1 ""
+    ${EndIf}
+    ${StdUtils.ExecShellAsUser} $0 "$launchLink" "open" "$1"
+  FunctionEnd
+  Function PDFSandwichFinishPre
+    ${If} ${isUpdated}
+    ${AndIf} ${isForceRun}
+      HideWindow
+      Call PDFSandwichStartAfterInstall
+      SetAutoClose true
+      Abort
+    ${EndIf}
+  FunctionEnd
+  !define MUI_PAGE_CUSTOMFUNCTION_PRE PDFSandwichFinishPre
+  !define MUI_FINISHPAGE_RUN
+  !define MUI_FINISHPAGE_RUN_FUNCTION PDFSandwichStartAfterInstall
+  !insertmacro MUI_PAGE_FINISH
+!macroend
+
 !macro customRemoveFiles
   SetOutPath "$TEMP"
   RMDir /r "$INSTDIR\resources"

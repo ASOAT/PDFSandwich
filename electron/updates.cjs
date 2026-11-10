@@ -2,7 +2,7 @@
 class UpdateController {
   constructor({ updater, version, autoCheck = true, onChange = () => {}, savePreference = () => {}, beforeInstall = async () => true, installFailed = () => {}, createToken }) {
     Object.assign(this, { updater, onChange, savePreference, beforeInstall, installFailed, createToken });
-    this.value = { currentVersion: version, status: updater ? 'idle' : 'disabled', autoCheck, version: null, percent: 0, transferred: 0, total: 0, bytesPerSecond: 0, lastChecked: null, error: '' };
+    this.value = { currentVersion: version, status: updater ? 'idle' : 'disabled', autoCheck, version: null, percent: 0, transferred: 0, total: 0, bytesPerSecond: 0, lastChecked: null, error: '', progress:null };
     if (!updater) return;
     Object.assign(updater, { autoDownload: false, autoInstallOnAppQuit: false, allowPrerelease: false, allowDowngrade: false, disableDifferentialDownload: false, disableWebInstaller: true });
     updater.on('update-available', info => this.set({ status: 'available', version: info.version, lastChecked: Date.now(), error: '' }));
@@ -16,10 +16,12 @@ class UpdateController {
   }
   snapshot() { return { ...this.value }; }
   set(patch) { Object.assign(this.value, patch); this.onChange(this.snapshot()); }
+  startup(label, completed, total) { this.set({progress:{phase:'restarting',label,completed,total}}); }
+  startupDone() { if(this.value.progress?.phase==='restarting')this.set({progress:null}); }
   fail(stage) {
     if (stage === 'installing') this.installFailed();
     const error = stage === 'installing' ? '无法启动安装程序。请重试，或从版本页面下载安装。' : stage === 'downloading' ? '更新下载失败，请检查网络后重试。' : '暂时无法检查更新，请检查网络后重试。';
-    this.set({ status: 'error', error, retry: stage === 'installing' ? 'install' : stage === 'downloading' ? 'download' : 'check' });
+    this.set({ status: 'error', error, progress:null, retry: stage === 'installing' ? 'install' : stage === 'downloading' ? 'download' : 'check' });
   }
   preference(enabled) {
     if (typeof enabled !== 'boolean') throw new Error('无效的更新设置。');
@@ -49,13 +51,16 @@ class UpdateController {
   cancel() { if (this.value.status === 'downloading') this.token?.cancel(); return this.snapshot(); }
   async install() {
     if (!this.updater || !(this.value.status === 'downloaded' || (this.value.status === 'error' && this.value.retry === 'install'))) return this.snapshot();
-    this.set({ status: 'installing', error: '', retry: null });
+    this.set({ status: 'installing', error: '', retry: null, progress:{phase:'preparing',label:'保存笔记',completed:0,total:5} });
     try {
-      if (!await this.beforeInstall()) { this.set({ status: 'downloaded' }); return this.snapshot(); }
-      this.updater.quitAndInstall(true, true);
+      const report=(completed,total,label)=>{if(this.value.status==='installing')this.set({progress:{phase:'preparing',label,completed,total}});};
+      if (!await this.beforeInstall(report)) { this.set({ status: 'downloaded',progress:null }); return this.snapshot(); }
+      if(this.value.status!=='installing')return this.snapshot();
+      this.set({progress:{phase:'handoff',label:'准备完成，正在打开安装进度窗口',completed:5,total:5}});
+      this.updater.quitAndInstall(false, true);
     } catch {
       this.installFailed();
-      this.set({ status: 'downloaded', error: '文档处理尚未完成，更新未安装。请等待当前操作完成并保存批注后重试。' });
+      this.set({ status: 'downloaded', progress:null, error: '文档处理尚未完成，更新未安装。请等待当前操作完成并保存批注后重试。' });
     }
     return this.snapshot();
   }

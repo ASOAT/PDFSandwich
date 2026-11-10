@@ -8,7 +8,7 @@ function setup(overrides = {}) {
   updater.checkForUpdates = async () => { updater.emit('update-available', { version: '0.5.0' }); return {}; };
   updater.downloadUpdate = async () => updater.emit('update-downloaded', { version: '0.5.0' });
   let installs = 0;
-  updater.quitAndInstall = (silent, restart) => { assert.equal(silent, true); assert.equal(restart, true); installs++; };
+  updater.quitAndInstall = (silent, restart) => { assert.equal(silent, false); assert.equal(restart, true); installs++; };
   const controller = new UpdateController({ updater, version: '0.4.0', createToken: () => ({ cancelled: false, cancel() { this.cancelled = true; this.onCancel?.(); } }), ...overrides });
   return { updater, controller, installs: () => installs };
 }
@@ -67,4 +67,18 @@ test('disabled development updater never checks or installs; preference is persi
   await controller.check(); await controller.download(); await controller.install();
   assert.equal(controller.snapshot().status, 'disabled'); controller.preference(false); assert.equal(stored, false);
   assert.throws(() => controller.preference('https://untrusted.example')); controller.dispose();
+});
+
+test('preparation progress follows completed work and clears on cancellation', async () => {
+  let finish;const stages=[];
+  const {controller,installs}=setup({onChange:s=>stages.push(s),beforeInstall:async report=>{report(1,5,'PDF');await new Promise(r=>{finish=r;});report(4,5,'Closing');return true;}});
+  await controller.check();await controller.download();const pending=controller.install();
+  assert.equal(controller.snapshot().progress.completed,1);assert.equal(installs(),0);
+  finish();await pending;assert.equal(controller.snapshot().progress.phase,'handoff');assert.equal(installs(),1);
+  assert.ok(stages.some(s=>s.progress?.completed===4));
+  const cancelled=setup({beforeInstall:async report=>{report(2,5,'Pending');return false;}});
+  await cancelled.controller.check();await cancelled.controller.download();await cancelled.controller.install();assert.equal(cancelled.controller.snapshot().progress,null);
+});
+test('restart progress clears when document restoration finishes',()=>{
+  const {controller}=setup();controller.startup('Reading',0,2);assert.equal(controller.snapshot().progress.phase,'restarting');controller.startup('Restoring',1,2);assert.equal(controller.snapshot().progress.completed,1);controller.startupDone();assert.equal(controller.snapshot().progress,null);
 });

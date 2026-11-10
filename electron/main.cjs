@@ -479,12 +479,16 @@ app.whenReady().then(() => {
     createToken: () => new updateLibrary.CancellationToken(),
     onChange: value => { if (!win.isDestroyed()) win.webContents.send('pdfsandwich:update', value); },
     savePreference: autoCheck => jsonWrite(path.join(userDir(), 'updates.json'), { autoCheck }),
-    beforeInstall: async () => {
+    beforeInstall: async report => {
+      report(0,5,'正在保存笔记');
       if(!await research.flush())throw new Error('请先保存或处理笔记编辑冲突，再安装更新。');
+      report(1,5,'正在保存 PDF 批注');
       if (!await mayLeave()) return false;
       if (savePromise) await savePromise;
+      report(2,5,'正在停止翻译并完成标记对应');
       await stopTranslation();
       await Promise.allSettled([...mappingTasks]);
+      report(3,5,'正在写入译文与阅读位置');
       await translationSaver.flush();
       const waitUntil = Date.now() + 30000;
       while (pending.size) {
@@ -492,14 +496,16 @@ app.whenReady().then(() => {
         await new Promise(resolve => setTimeout(resolve, 100));
       }
       persist();
-      if (doc) jsonWrite(path.join(userDir(), 'resume-update.json'), { path: doc.path });
+      report(4,5,'正在关闭 PDF 后台服务');
       const closingWorker = worker;
       if (closingWorker && closingWorker.exitCode === null) await new Promise((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error('PDF 后端仍在关闭，请重试。')), 10000);
         closingWorker.once('exit', () => { clearTimeout(timeout); resolve(); });
         closingWorker.kill();
       });
+      jsonWrite(path.join(userDir(), 'resume-update.json'), { path: doc?.path||null, version:updates.snapshot().version });
       stopping = true;
+      report(5,5,'准备完成');
       return true;
     },
     installFailed: () => { stopping = false; }
@@ -513,9 +519,15 @@ app.whenReady().then(() => {
   win.on('close', event => { if (stopping) return; event.preventDefault(); if (removingLibraryDocuments || updates.snapshot().status === 'installing') return; research.flush().then(ok=>ok?mayLeave():false).then(async yes => { if (yes) { stopping = true; readingSave.flush(); await stopTranslation(); await Promise.allSettled([...mappingTasks]); await translationSaver.flush(); worker?.kill(); win.destroy(); app.quit(); } }).catch(error => dialog.showErrorBox('保存失败', redact(error.message))); });
   const resumeFile = path.join(userDir(), 'resume-update.json');
   const resume = readJson(resumeFile, null);
-  if (fs.existsSync(resumeFile)) fs.unlinkSync(resumeFile);
+  const restarting=Boolean(resume)||process.argv.includes('--updated');
+  if(restarting)updates.startup('正在启动阅读器',0,2);
   const argument = process.argv.find(x => /\.pdf$/i.test(x) && fs.existsSync(x)) || (typeof resume?.path === 'string' && fs.existsSync(resume.path) ? resume.path : null);
-  if (argument) win.webContents.once('did-finish-load', () => openDocument(argument).catch(error => dialog.showErrorBox('打开失败', error.message)));
+  win.webContents.once('did-finish-load', async () => {
+    if(restarting)updates.startup(argument?'正在恢复上次阅读的文档':'正在载入文献库',1,2);
+    try { if(argument)await openDocument(argument); }
+    catch(error) { updates.startupDone();dialog.showErrorBox('打开失败',error.message); }
+    finally { updates.startupDone();await fsp.rm(resumeFile,{force:true}).catch(()=>{}); }
+  });
   if(pendingDeepLink)win.webContents.once('did-finish-load',()=>research.navigate(pendingDeepLink).catch(error=>dialog.showErrorBox('打开文献链接失败',error.message)));
 });
 app.on('window-all-closed', () => app.quit());

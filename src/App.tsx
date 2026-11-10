@@ -9,6 +9,7 @@ import type { Capture, Excerpt } from './research-types';
 import { Camera, Sigma, NotebookPen, Columns2, } from 'lucide-react';
 import { LibraryView } from './LibraryView';
 import { UpdatePanel } from './UpdatePanel';
+import { UpdateProgress } from './UpdateProgress';
 import type { UpdateState, Mark, Match, Settings, Side, State, Tool, Rect } from './types';
 
 const initial: State = { doc:null,settings:{provider:'local',localEngine:'hy',useGlossary:true,glossary:'',baseUrl:'https://api.deepseek.com',model:'deepseek-flash',autoTranslate:true,saveTranslation:false,hasKey:false},recent:[],canUndo:false,canRedo:false,queued:0,translating:false };
@@ -106,7 +107,7 @@ export default function App(){
     {researchSettings&&<ResearchSettings onClose={()=>setResearchSettings(false)}/>}
     {excerpt&&<ExcerptDialog {...excerpt} onClose={()=>setExcerpt(null)} onSaved={id=>{setExcerptId(id);setLayout('notes');setPanel(null);notify('摘录已保存到文献笔记');}}/>}
     {settingsOpen&&<SettingsDialog focusUpdates={focusUpdates} update={update} onUpdateAction={async action=>{if(action==='updateInstall'&&reading.current){clearTimeout(pageTimer.current);await call('page',reading.current);}void call(action);}} onUpdatePreference={async enabled=>{const previous=update;setUpdate(value=>value?{...value,autoCheck:enabled}:value);const result=await call<UpdateState>('updatePreference',{enabled});setUpdate(result??previous);}} settings={state.settings} onClose={()=>setSettingsOpen(false)} onSave={async(value)=>{const result=await window.pdfsandwich.call<Settings>('settings',value);notify('翻译设置已保存');return result;}} onTest={()=>window.pdfsandwich.call<{text:string}>('testConnection')}/>}
-    {update?.status==='installing'&&<div className="busy-overlay"><LoaderCircle className="spin" size={22}/><span>正在准备安装更新…</span></div>}
+    <UpdateProgress update={update}/>
     {notice&&<div className="toast"><Check size={17}/>{notice}</div>}{error&&<div className="error-banner" role="alert"><span>{error}</span><Action label="关闭错误提示" onClick={()=>setError('')}><X size={16}/></Action></div>}{busy&&<div className="busy-overlay"><LoaderCircle className="spin" size={22}/><span>{busy}</span></div>}
   </div>;
 }
