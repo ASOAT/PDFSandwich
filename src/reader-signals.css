@@ -13,6 +13,11 @@
 .reader-ping-question>div{background:none;border:0;box-shadow:none}
 .signal-question-symbol{font-family:"Segoe UI",sans-serif;font-size:68px;font-weight:900;line-height:.9;-webkit-text-stroke:1px #78552b;text-shadow:0 3px 0 #6e4620,0 5px 12px #40270055}
 .signal-announcement{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+.signal-toolbar{display:inline-flex;align-items:center;gap:1px}.signal-config-button{width:23px!important;min-width:23px!important;padding:3px!important}
+.signal-option .signal-image{width:30px;height:30px;object-fit:contain}.signal-option .signal-emoji{font-size:27px;line-height:30px}.signal-option>span:last-child{max-width:56px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.signal-center{overflow:hidden;text-overflow:ellipsis;text-align:center;padding:4px;line-height:1.25;overflow-wrap:anywhere}
+.reader-ping-custom{width:80px;height:80px}.reader-ping-custom>div{height:80px;background:none;border:0;box-shadow:none;filter:drop-shadow(0 3px 5px #0004)}.reader-ping-custom .signal-image{width:80px;height:80px;object-fit:contain}.reader-ping-custom .signal-emoji{font-size:64px;line-height:80px}.reader-ping>span{max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.signal-load-error{position:fixed;z-index:111;bottom:25px;left:50%;transform:translateX(-50%);background:var(--card);color:#bd554a;padding:10px 16px;border:1px solid var(--border);border-radius:8px}
 @keyframes signal-open{from{opacity:0;scale:.92}to{opacity:1;scale:1}}
 @keyframes signal-pop{from{scale:.55}to{scale:1}}
 @keyframes signal-ring{from{scale:.5;opacity:.9}to{scale:1.5;opacity:0}}

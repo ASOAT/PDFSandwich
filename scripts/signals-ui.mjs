@@ -12,8 +12,9 @@ await fs.copyFile('tmp/pdfs/release-sample.pdf',file);
 const digest=async()=>createHash('sha256').update(await fs.readFile(file)).digest('hex');
 const before=await digest();
 const launchFlags=['--disable-features=CalculateNativeWinOcclusion','--disable-renderer-backgrounding'];
-const app=await electron.launch({...(exe?{executablePath:path.resolve(exe),args:launchFlags}:{args:['.',...launchFlags]}),cwd:root,
+const launch=()=>electron.launch({...(exe?{executablePath:path.resolve(exe),args:launchFlags}:{args:['.',...launchFlags]}),cwd:root,
   env:{...process.env,PDFSANDWICH_DATA_DIR:data},timeout:60000});
+let app=await launch();
 const checks=[],errors=[];
 let page;
 async function shot(name){await page.waitForTimeout(180);await page.screenshot({path:`test-results/${name}.png`});}
@@ -82,6 +83,42 @@ try {
   // A lost native window focus must never leave a held gesture behind.
   await begin();await page.evaluate(()=>window.dispatchEvent(new Event('blur')));await release();await empty();
   checks.push('window blur cancels');
+  // Exercise editing and real raster decoding with an original transparent fixture.
+  const customize=()=>page.getByRole('button',{name:'自定义表情轮盘',exact:true}).click();
+  await customize();await page.getByRole('dialog',{name:'自定义表情轮盘'}).waitFor();
+  await page.locator('.signal-slot-list button').nth(4).click();
+  await page.getByLabel('表情名称',{exact:true}).fill('测试表情');
+  const png=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=400;c.height=200;const x=c.getContext('2d');x.fillStyle='#f2a654';x.fillRect(0,30,160,140);x.fillStyle='#689ade';x.beginPath();x.arc(290,100,70,0,Math.PI*2);x.fill();return c.toDataURL('image/png').split(',')[1];});
+  await page.getByLabel('选择表情图片',{exact:true}).setInputFiles({name:'custom.png',mimeType:'image/png',buffer:Buffer.from(png,'base64')});
+  await page.getByRole('heading',{name:'裁剪表情',exact:true}).waitFor();
+  await page.getByRole('button',{name:'完整图片',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('.signal-crop-canvas')?.getContext('2d').getImageData(0,0,1,1).data[3]===0);
+  await shot('signal-crop');
+  await page.getByRole('button',{name:'使用这张表情',exact:true}).click();
+  assert.ok((await page.locator('.signal-editor-preview img').getAttribute('src')).startsWith('data:image/png;base64,'));
+  await page.locator('.signal-slot-list button').nth(1).click();
+  await page.getByLabel('表情类型',{exact:true}).selectOption('emoji');
+  await page.getByLabel('Emoji 内容',{exact:true}).fill('👀');
+  await page.getByLabel('表情名称',{exact:true}).fill('看看');
+  await shot('signal-editor');
+  await page.getByRole('button',{name:'保存轮盘',exact:true}).click();
+  await page.getByRole('dialog').waitFor({state:'detached'});
+  const saved=await call('signalsGet');assert.equal(saved.slots[4].kind,'image');assert.equal(saved.slots[1].value,'👀');
+  await begin();await page.mouse.move(origin.x+70,origin.y+45);await release();
+  await page.locator('.reader-ping[data-signal="测试表情"] img').waitFor();await shot('signal-custom-ping');await esc();
+  await customize();await page.getByLabel('表情名称',{exact:true}).fill('不应保存');await page.getByRole('button',{name:'取消',exact:true}).click();assert.deepEqual(await call('signalsGet'),saved);
+  checks.push('transparent image upload, crop, Emoji, custom ping and cancel');
+  await app.evaluate(({app})=>app.exit(0));app=await launch();page=await app.firstWindow();page.setDefaultTimeout(15000);page.on('pageerror',e=>errors.push(e.message));
+  await app.evaluate(({BrowserWindow})=>{const win=BrowserWindow.getAllWindows()[0];win.setContentSize(1500,960);win.webContents.setBackgroundThrottling(false);win.setPosition(-4000,0);});
+  await page.waitForFunction(()=>Boolean(window.pdfsandwich));
+  assert.deepEqual(await call('signalsGet'),saved);await call('open',{path:file});
+  await page.waitForFunction(()=>document.querySelector('[data-side="en"] .textLayer')&&!document.querySelector('.page-rendering'));
+  // begin/esc are rebound to the restarted page through the shared variable.
+  await page.mouse.move(origin.x,origin.y);await page.keyboard.down('Alt');await page.locator('.signal-wheel').waitFor();await page.mouse.move(origin.x+70,origin.y+45);await release();
+  await page.locator('.reader-ping[data-signal="测试表情"] img').waitFor();await esc();
+  await customize();await page.getByRole('button',{name:'全部恢复默认',exact:true}).click();await page.getByRole('button',{name:'保存轮盘',exact:true}).click();await page.getByRole('dialog').waitFor({state:'detached'});
+  assert.equal((await call('signalsGet')).slots[0].value,'question');assert.ok(!String(await fs.readFile(path.join(data,'reader-signals.json'))).includes('data:image'));
+  checks.push('app restart preserves custom images; reset removes embedded image data');
   assert.equal(await digest(),before);assert.equal((await call('state')).doc.annotations.length,0);
   assert.deepEqual(errors,[]);
   const report={packaged:Boolean(exe),checks,sourceUnchanged:true,errors};

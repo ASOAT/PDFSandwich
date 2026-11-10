@@ -1,16 +1,10 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, lazy, Suspense, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { CircleHelp, CircleAlert, ThumbsUp, Lightbulb, Laugh, Heart, Radar } from 'lucide-react';
+import { Radar, SlidersHorizontal } from 'lucide-react';
+import { defaultSignals, SignalArt, type SignalConfig } from './signal-types';
+const SignalEditor=lazy(()=>import('./SignalEditor'));
 import './reader-signals.css';
 
-const signals = [
-  { label: '疑问', icon: CircleHelp, color: '#e6bb63' },
-  { label: '重点', icon: CircleAlert, color: '#dfa37e' },
-  { label: '赞同', icon: ThumbsUp, color: '#65c4aa' },
-  { label: '灵感', icon: Lightbulb, color: '#78b9ed' },
-  { label: '绷不住', icon: Laugh, color: '#eca477' },
-  { label: '喜欢', icon: Heart, color: '#e58eae' },
-];
 type Gesture = { x: number; y: number; selected: number };
 type Ping = { id: number; x: number; y: number; selected: number };
 // Clockwise from west: Alt + drag left is the familiar question-mark gesture.
@@ -20,6 +14,10 @@ function selection(dx: number, dy: number) {
 }
 
 export function ReaderSignals({ active, viewKey }: { active: boolean; viewKey: string }) {
+  const [config,setConfig]=useState<SignalConfig>({version:1,slots:defaultSignals});
+  const [editing,setEditing]=useState(false),[loaded,setLoaded]=useState(false),[loadError,setLoadError]=useState('');
+  const signals=config.slots;
+  useEffect(()=>{let live=true;window.pdfsandwich.call<SignalConfig>('signalsGet').then(value=>{if(live)setConfig(value);}).catch(()=>{if(live)setLoadError('无法读取已保存的轮盘配置。保存设置后可重新建立配置。');}).finally(()=>{if(live)setLoaded(true);});return()=>{live=false;};},[]);
   const [enabled, setEnabled] = useState(() => localStorage.getItem('reader-signals') !== 'off');
   const [gesture, setGesture] = useState<Gesture | null>(null);
   const [pings, setPings] = useState<Ping[]>([]);
@@ -27,7 +25,7 @@ export function ReaderSignals({ active, viewKey }: { active: boolean; viewKey: s
   const sequence = useRef(0);
   useEffect(() => {
     setGesture(null); setPings([]); setAnnouncement('');
-    if (!active || !enabled) return;
+    if (!active || !enabled || editing) return;
     let current: Gesture | null = null;
     let cursor: { x: number; y: number; buttons: number } | null = null;
     let altHeld = false, deferredStart = false, mouseHeld = false;
@@ -102,23 +100,24 @@ export function ReaderSignals({ active, viewKey }: { active: boolean; viewKey: s
       window.removeEventListener('blur', blur); window.removeEventListener('resize', clear);
       window.removeEventListener('scroll', clear, true); document.removeEventListener('visibilitychange', visibility);
     };
-  }, [active, enabled, viewKey]);
+  }, [active, enabled, viewKey, editing, config]);
   const title = `${enabled ? '关闭' : '开启'}互动信号 · 按住 Alt 移动鼠标，松开 Alt 发送，中心 / Esc 取消`;
   const radius = 116;
-  return <><button className={`icon-button ${enabled ? 'selected' : ''}`} aria-label="互动信号" aria-pressed={enabled} title={title}
-    onClick={() => setEnabled(value => { localStorage.setItem('reader-signals', value ? 'off' : 'on'); return !value; })}><Radar size={17}/></button>
+  return <><span className="signal-toolbar"><button className={`icon-button ${enabled ? 'selected' : ''}`} aria-label="互动信号" aria-pressed={enabled} title={title}
+    onClick={() => setEnabled(value => { localStorage.setItem('reader-signals', value ? 'off' : 'on'); return !value; })}><Radar size={17}/></button><button className="icon-button signal-config-button" aria-label="自定义表情轮盘" title="自定义表情轮盘" disabled={!loaded} onClick={()=>setEditing(true)}><SlidersHorizontal size={13}/></button></span>
+    {editing&&createPortal(<Suspense fallback={<div className="busy-overlay">正在打开轮盘设置…</div>}><SignalEditor value={config} onSave={value=>{setConfig(value);setLoadError('');setEditing(false);}} onClose={()=>setEditing(false)}/>{loadError&&<p className="signal-load-error" role="alert">{loadError}</p>}</Suspense>,document.body)}
     {createPortal(<div className="reader-signals" aria-label="阅读信号">
       {gesture && <div className="signal-wheel" role="status" aria-label="信号轮盘" style={{left:Math.max(radius,Math.min(innerWidth-radius,gesture.x)),top:Math.max(radius,Math.min(innerHeight-radius-36,gesture.y))}}>
         <svg viewBox="-116 -116 232 232" aria-hidden="true">{signals.map((item,i) => {
           const a=(i*60-210)*Math.PI/180,b=(i*60-150)*Math.PI/180;
-          return <path key={item.label} className={gesture.selected===i?'active':''} style={{'--signal-color':item.color} as CSSProperties}
+          return <path key={i} className={gesture.selected===i?'active':''} style={{'--signal-color':item.color} as CSSProperties}
             d={`M ${Math.cos(a)*36} ${Math.sin(a)*36} L ${Math.cos(a)*112} ${Math.sin(a)*112} A 112 112 0 0 1 ${Math.cos(b)*112} ${Math.sin(b)*112} L ${Math.cos(b)*36} ${Math.sin(b)*36} A 36 36 0 0 0 ${Math.cos(a)*36} ${Math.sin(a)*36} Z`}/>;
         })}</svg>
-        {signals.map(({label,icon:Icon,color},i) => <div key={label} className={`signal-option ${gesture.selected===i?'active':''}`} style={{left:116+Math.sin(i*Math.PI/3-Math.PI/2)*76,top:116-Math.cos(i*Math.PI/3-Math.PI/2)*76,color}}><Icon size={25}/><span>{label}</span></div>)}
+        {signals.map((item,i) => <div key={i} className={`signal-option ${gesture.selected===i?'active':''}`} style={{left:116+Math.sin(i*Math.PI/3-Math.PI/2)*76,top:116-Math.cos(i*Math.PI/3-Math.PI/2)*76,color:item.color}}><SignalArt item={item}/><span>{item.label}</span></div>)}
         <div className="signal-center">{gesture.selected < 0 ? '取消' : signals[gesture.selected].label}</div>
         <div className="signal-hint">松开 Alt 发送 · Esc 取消</div>
       </div>}
-      {pings.map(({id,x,y,selected}) => { const {icon:Icon,label,color}=signals[selected];return <div key={id} className={`reader-ping ${selected===0?'reader-ping-question':''}`} data-signal={label} style={{left:x,top:y,'--signal-color':color} as CSSProperties}><i/><div>{selected===0?<b className="signal-question-symbol">?</b>:<Icon size={32} strokeWidth={2.4}/>}</div>{selected!==0&&<span>{label}</span>}</div>; })}
+      {pings.map(({id,x,y,selected}) => { const item=signals[selected],question=item.kind==='builtin'&&item.value==='question';return <div key={id} className={`reader-ping ${question?'reader-ping-question':''} ${item.kind!=='builtin'?'reader-ping-custom':''}`} data-signal={item.label} style={{left:x,top:y,'--signal-color':item.color} as CSSProperties}><i/><div><SignalArt item={item} ping/></div>{!question&&<span>{item.label}</span>}</div>; })}
       <span className="signal-announcement" role="status" aria-live="polite">{announcement}</span>
     </div>, document.body)}
   </>;

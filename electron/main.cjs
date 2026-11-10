@@ -13,6 +13,7 @@ const { UpdateController } = require('./updates.cjs');
 const { Library } = require('./library.cjs');
 const { removeLibraryDocuments } = require('./library-removal.cjs');
 const { createResearch } = require('./research.cjs');
+const { createSignalStore } = require('./signals.cjs');
 const { migrateEnglishLibrary } = require('./library-migration.cjs');
 const { TranslationFileSaver, snapshotTranslation } = require('./translation-file.cjs');
 protocol.registerSchemesAsPrivileged([{ scheme: 'pdfsandwich', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }]);
@@ -257,7 +258,10 @@ async function pump() {
   finally { if (version === generation) { activePage = null; busy = false; emit(); pump(); } }
 }
 
+const signalStore = createSignalStore(path.join(userDir(), 'reader-signals.json'), nativeImage);
 const actions = {
+  signalsGet: () => signalStore.get(),
+  signalsSave: config => signalStore.save(config),
   updateState: () => updates.snapshot(),
   updateCheck: () => updates.check(),
   updateDownload: () => updates.download(),

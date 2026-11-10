@@ -1,0 +1,8 @@
+[
+  {"kind":"builtin","value":"question","label":"疑问","color":"#e6bb63"},
+  {"kind":"builtin","value":"alert","label":"重点","color":"#dfa37e"},
+  {"kind":"builtin","value":"agree","label":"赞同","color":"#65c4aa"},
+  {"kind":"builtin","value":"idea","label":"灵感","color":"#78b9ed"},
+  {"kind":"builtin","value":"laugh","label":"绷不住","color":"#eca477"},
+  {"kind":"builtin","value":"heart","label":"喜欢","color":"#e58eae"}
+]
