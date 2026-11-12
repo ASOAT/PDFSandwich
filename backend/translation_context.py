@@ -5,7 +5,7 @@ import re
 PREFIX = '\x1econtext\x1f'
 
 
-def page_edges(request):
+def page_edges(request, include_opening=False):
     path, index = request.get('documentPath'), request.get('pageIndex')
     if not path or not isinstance(index, int):
         return {}
@@ -13,16 +13,20 @@ def page_edges(request):
     with fitz.open(path) as doc:
         before=doc[index-1].get_text(sort=True)[-600:] if index>0 else ''
         after=doc[index+1].get_text(sort=True)[:300] if index+1<len(doc) else ''
-    return {'before':before,'after':after}
+        opening = doc[0].get_text(sort=True)[:1100] if include_opening and index > 0 else ''
+    result = {'before': before, 'after': after}
+    if opening:
+        result['opening'] = opening
+    return result
 
 
-def contexts_for_page(page, edges=None):
+def contexts_for_page(page, edges=None, all_paragraphs=False):
     paragraphs=[p for p in page.pdf_paragraph if p.box and p.unicode and p.layout_label not in ('abandon','reference')]
     result={};edges=edges or {}
     def overlap(a,b):
         return max(0,min(a.x2,b.x2)-max(a.x,b.x)) >= min(a.x2-a.x,b.x2-b.x)*.3
     for p in paragraphs:
-        if not re.match(r'^\s*(?:where|here|this|these|those|it|they|thus|therefore|which|and|with)\b',p.unicode,re.I):
+        if not all_paragraphs and not re.match(r'^\s*(?:where|here|this|these|those|it|they|thus|therefore|which|and|with)\b',p.unicode,re.I):
             continue
         above=[q for q in paragraphs if q is not p and overlap(p.box,q.box) and q.box.y>=p.box.y2-2]
         below=[q for q in paragraphs if q is not p and overlap(p.box,q.box) and q.box.y2<=p.box.y+2]

@@ -40,6 +40,44 @@ class LayoutTranslator:
         return '</style>', r'<\s*/\s*style\s*>'
 
 
+def translate_cloud_page(translator, page, pbar, tracker, engine):
+    from translation_batch import MAX_PARAGRAPHS, MAX_SOURCE_CHARS
+
+    # Use BabelDOC's existing placeholder extraction and rendering for every
+    # paragraph, changing only how the prepared text is sent to the provider.
+    fonts = {font.font_id: font for font in page.pdf_font}
+    xobject_fonts = {obj.xobj_id: {**fonts, **{f.font_id: f for f in obj.pdf_font}}
+                     for obj in page.pdf_xobject}
+    group = []
+    characters = 0
+
+    def render_group():
+        outputs = engine.translate_group([text for _, _, _, text in group])
+        for (paragraph, entry, translation_input, _), translated in zip(group, outputs, strict=True):
+            if translated != translation_input.unicode:
+                translator.post_translate_paragraph(paragraph, entry, translation_input, translated)
+            if pbar is not None:
+                pbar.advance(1)
+        group.clear()
+
+    for paragraph in page.pdf_paragraph:
+        translator.translation_config.raise_if_cancelled()
+        entry = tracker.new_paragraph()
+        text, translation_input = translator.pre_translate_paragraph(paragraph, entry, fonts, xobject_fonts)
+        if text is None:
+            if pbar is not None:
+                pbar.advance(1)
+            continue
+        length = len(translation_input.unicode)
+        if group and (len(group) >= MAX_PARAGRAPHS or characters + length > MAX_SOURCE_CHARS):
+            render_group()
+            characters = 0
+        group.append((paragraph, entry, translation_input, text))
+        characters += length
+    if group:
+        render_group()
+
+
 def install():
     global _installed
     if _installed:
@@ -54,11 +92,15 @@ def install():
     prepare = ILTranslator.pre_translate_paragraph
     translate_page = ILTranslator.process_page
 
-    def translate_page_with_context(self, page, *args, **kwargs):
+    def translate_page_with_context(self, page, executor, pbar=None, tracker=None):
         from translation_context import contexts_for_page
-        engine=getattr(self.translate_engine,'engine',None)
-        self.translation_config._sandwich_contexts=contexts_for_page(page,getattr(engine,'page_context',{}))
-        return translate_page(self,page,*args,**kwargs)
+        engine = getattr(self.translate_engine, 'engine', None)
+        cloud = getattr(engine, 'cloud', None)
+        self.translation_config._sandwich_contexts = contexts_for_page(
+            page, getattr(engine, 'page_context', {}), all_paragraphs=cloud is not None)
+        if cloud is not None:
+            return translate_cloud_page(self, page, pbar, tracker, engine)
+        return translate_page(self, page, executor, pbar, tracker)
 
     ILTranslator.process_page = translate_page_with_context
 

@@ -14,7 +14,7 @@ def main():
         try:
             request = json.loads(line)
             operation = request["op"]
-            if operation not in {"inspect", "page_translation_kind", "catalog", "sync_translation", "save_original", "extract_page", "map_annotation", "selection_geometry", "texts", "export_pdf", "search", "research_cover", "research_clip", "research_identifiers", "formula_recognize"}:
+            if operation not in {"inspect", "page_translation_kind", "catalog", "sync_translation", "save_original", "extract_page", "map_annotation", "selection_geometry", "texts", "export_pdf", "search", "research_cover", "research_clip", "research_identifiers", "formula_recognize", "test_cloud_connection"}:
                 raise ValueError("Unknown operation")
             if operation.startswith('research_'):
                 import research
@@ -22,6 +22,9 @@ def main():
             elif operation == 'formula_recognize':
                 from formula_ocr import recognize
                 value = recognize(**request.get('args', {}))
+            elif operation == 'test_cloud_connection':
+                from cloud_translation import test_connection
+                value = test_connection(**request.get('args', {}))
             else:
                 value = getattr(pdf_ops, operation)(**request.get("args", {}))
             response = {"id": request["id"], "result": value}

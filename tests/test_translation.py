@@ -56,9 +56,11 @@ def test_contents_leaves_original_entry_if_translation_is_corrupt(tmp_path):
     with pymupdf.open(output) as doc:assert 'Section title' in doc[0].get_text()
 
 def test_cloud_adapter_glossary_cache_and_failures(tmp_path):
+    import asyncio
     import json
     import threading
     from http.server import BaseHTTPRequestHandler, HTTPServer
+    from cloud_translation import CloudError
     from text_engine import TextEngine
     calls=[]
     class Handler(BaseHTTPRequestHandler):
@@ -72,12 +74,23 @@ def test_cloud_adapter_glossary_cache_and_failures(tmp_path):
             self.wfile.write(json.dumps({'choices':[{'message':{'content':text},'finish_reason':'stop'}]}).encode())
     server=HTTPServer(('127.0.0.1',0),Handler);thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
     request={'modelDir':str(tmp_path),'settings':{'provider':'api','baseUrl':f'http://127.0.0.1:{server.server_port}','model':'test','glossary':'twist = 扭量'}}
-    engine=TextEngine(request,lambda *_:None)
+    async def verify():
+        engine = TextEngine(request, lambda *_:None, loop=asyncio.get_running_loop())
+        try:
+            assert await asyncio.to_thread(engine.translate, 'twist') == '扭量'
+            assert 'twist 翻译成 扭量' in calls[0]['messages'][0]['content']
+            assert await asyncio.to_thread(engine.translate, 'twist') == '扭量' and len(calls) == 1
+            assert await asyncio.to_thread(engine.translate, 'repeat-test') == 'repeat-test' and len(engine.warnings) == 1
+            with pytest.raises(CloudError, match='HTTP 429'):
+                await asyncio.to_thread(engine.translate, 'quota-test')
+            assert engine.errors
+        finally:
+            engine.close()
+            await engine.cloud.close()
+
     try:
-        assert engine.translate('twist')=='扭量'
-        assert 'twist 翻译成 扭量' in calls[0]['messages'][0]['content']
-        assert engine.translate('twist')=='扭量' and len(calls)==1
-        assert engine.translate('repeat-test')=='repeat-test' and len(engine.warnings)==1
-        with pytest.raises(Exception):engine.translate('quota-test')
-        assert engine.errors
-    finally:engine.close();server.shutdown();server.server_close();thread.join()
+        asyncio.run(verify())
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()

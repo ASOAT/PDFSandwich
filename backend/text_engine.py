@@ -1,24 +1,25 @@
 """Shared translation memory, terminology and validation across PDF pages."""
+import asyncio
 import hashlib
 import json
 import re
 from pathlib import Path
 import sqlite3
 import threading
-import urllib.request
 from translation_quality import normalize, translation_problem, translation_prompt, translation_units
 from cancellation import PageControl, PageCancelled
 
 _models={}
 
 class TextEngine:
-    def __init__(self,request,progress):
+    def __init__(self,request,progress,loop=None):
         self.cfg=request['settings'];self.force=request.get('force',False);self.local=None;self.records=[];self.warnings=[];self.errors=[];self.hits=0
         self.control=PageControl(request);self.control.check();self.repaired=0
         directory=Path(request['modelDir']);directory.mkdir(parents=True,exist_ok=True)
         self.directory=directory;self.progress=progress
         from translation_context import page_edges
-        self.page_context=page_edges(request);self.context={}
+        api = self.cfg.get('provider') == 'api'
+        self.page_context=page_edges(request, include_opening=api);self.context={}
         engine=self.cfg.get('localEngine','hy')
         if self.cfg.get('provider','local')=='local':
             identity=(str(directory.resolve()),engine)
@@ -36,6 +37,13 @@ class TextEngine:
         identity={key:self.cfg.get(key) for key in ('provider','localEngine','glossary','useGlossary')}
         if self.local is None:identity.update(baseUrl=self.cfg['baseUrl'],model=self.cfg['model'])
         self.identity=json.dumps(identity,sort_keys=True)+'quality-v12'
+        self.cloud = None
+        self.loop = loop
+        if api:
+            self.identity += '-cloud-batch-v1'
+            if loop is not None:
+                from cloud_translation import CloudClient
+                self.cloud = CloudClient(self.cfg)
         self.lock=threading.Lock()
 
     def translate(self,text):
@@ -159,27 +167,94 @@ class TextEngine:
     def generate(self,source):
         if self.local is not None:
             return self.local.translate(source) if self.cfg.get('localEngine','hy')=='argos' else self.local.translate(source,self.cfg.get('glossary',''),self.cfg.get('useGlossary',True),context=self.context,control=self.control)
-        body={'model':self.cfg['model'],'messages':[{'role':'user','content':translation_prompt(source,self.cfg.get('glossary',''),self.cfg.get('useGlossary',True),context=self.context)}], 'temperature':0,'stream':False,'max_tokens':min(4096,max(200,len(source)*2))}
-        if 'api.deepseek.com' in self.cfg['baseUrl']:body['thinking']={'type':'disabled'}
-        req=urllib.request.Request(self.cfg['baseUrl'].rstrip('/')+'/chat/completions',data=json.dumps(body).encode(),headers={'Content-Type':'application/json','Authorization':'Bearer '+(self.cfg.get('apiKey') or 'local')})
-        with urllib.request.urlopen(req,timeout=90) as response:result=json.load(response)
-        choice=result['choices'][0]
-        if choice.get('finish_reason')=='length':raise ValueError('译文长度超限')
-        return choice['message']['content'].strip()
+        context = dict(self.context)
+        if opening := self.page_context.get('opening'):
+            context['documentOpening'] = opening
+        prompt = translation_prompt(source, self.cfg.get('glossary', ''), self.cfg.get('useGlossary', True), context=context)
+        return self.cloud_complete([{'role': 'user', 'content': prompt}], min(4096, max(200, len(source)*2)))
+
+    def cloud_complete(self, messages, max_tokens):
+        # BabelDOC runs layout in a worker thread. Keep the HTTP connection
+        # pool on the page's event loop so changing pages can abort its reads.
+        request = self.cloud.complete(messages, max_tokens, control=self.control, on_retry=self.progress)
+        return asyncio.run_coroutine_threadsafe(request, self.loop).result()
+
+    def cache_key(self, source, context):
+        opening = self.page_context.get('opening', '') if self.cfg.get('provider') == 'api' else ''
+        return hashlib.sha256((self.identity+json.dumps(context,sort_keys=True)+opening+source).encode()).hexdigest()
+
+    def load_cached(self, key, source):
+        if self.force:
+            return None
+        row = self.memory.execute('SELECT value FROM translations WHERE key=?', (key,)).fetchone()
+        if row:
+            saved = json.loads(row[0])
+            if not translation_problem(source, saved['text']):
+                self.hits += 1
+                return saved['text'], saved['records'] or [self.alignment(source, saved['text'])]
+        return None
+
+    def store_cached(self, key, text, records):
+        self.memory.execute('INSERT OR REPLACE INTO translations VALUES (?,?)',
+                            (key, json.dumps({'text': text, 'records': records}, ensure_ascii=False)))
+
+    def translate_group(self, texts):
+        from translation_batch import protect_for_batch, restore_literals, batch_messages, parse_batch
+        from translation_context import unpack
+
+        self.control.check()
+        batch = []
+        plans = {}
+        results = {}
+        for index, text in enumerate(texts):
+            original, context = unpack(text)
+            if original.startswith('\x1ereference\x1f'):
+                continue
+            original = normalize(original)
+            plan = protect_for_batch(original, context)
+            if plan is None:
+                continue
+            source, literals = plan
+            # A different cache namespace keeps batch translations and their
+            # independent repairs from masking one another.
+            key = self.cache_key('batch\x1f'+source, context)
+            plans[index] = (original, literals, key)
+            if saved := self.load_cached(key, source):
+                results[index] = saved[0]
+            else:
+                batch.append({'id': index, 'text': source, 'context': context})
+
+        if len(batch) >= 2:
+            messages = batch_messages(batch, self.page_context.get('opening', ''),
+                                      self.cfg.get('glossary', ''), self.cfg.get('useGlossary', True))
+            try:
+                generated = parse_batch(self.cloud_complete(messages, 4096), {item['id']: item['text'] for item in batch})
+            except ValueError:
+                generated = {}
+            for index, value in generated.items():
+                self.store_cached(plans[index][2], value, [])
+            self.memory.commit()
+            results.update(generated)
+
+        for index, text in enumerate(texts):
+            self.control.check()
+            if index in results:
+                original, literals, _ = plans[index]
+                output = restore_literals(results[index], literals)
+                self.records.append(self.alignment(original, output))
+                yield output
+            else:
+                yield self.translate(text)
 
     def translate_cached(self,source,repair=True):
         self.control.check()
         if not re.search(r'[A-Za-z]{2}',source) or re.fullmatch(r'\s*\{\s*v\s*\d+\s*\}\s*',source):return source,[]
-        key=hashlib.sha256((self.identity+json.dumps(self.context,sort_keys=True)+source).encode()).hexdigest()
-        row=self.memory.execute('SELECT value FROM translations WHERE key=?',(key,)).fetchone()
-        if row and not self.force:
-            saved=json.loads(row[0])
-            if not translation_problem(source,saved['text']):
-                self.hits+=1
-                return saved['text'],saved['records'] or [self.alignment(source,saved['text'])]
+        key=self.cache_key(source,self.context)
+        if saved := self.load_cached(key, source):
+            return saved
         warnings=len(self.warnings)
         previous=len(self.local.records) if self.local is not None else 0
-        units=translation_units(source)
+        units=translation_units(source, 1800 if self.cloud else 600)
         if len(units)>1:
             output=' '.join(self.translate_cached(unit.strip(),repair)[0] for unit in units if unit.strip())
             records=[self.alignment(source,output)]
@@ -212,7 +287,8 @@ class TextEngine:
                 if len(self.warnings)==warnings:self.repaired+=1
         if not records:records=[self.alignment(source,output)]
         if len(self.warnings)==warnings:
-            self.memory.execute('INSERT OR REPLACE INTO translations VALUES (?,?)',(key,json.dumps({'text':output,'records':records},ensure_ascii=False)));self.memory.commit()
+            self.store_cached(key, output, records)
+            self.memory.commit()
         # Store a completed segment before yielding, so resuming does not redo it.
         self.control.check()
         return output,records

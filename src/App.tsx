@@ -129,7 +129,7 @@ function SettingsDialog({settings,onClose,onSave,onTest,update,onUpdateAction,on
         <label>服务地址<input value={form.baseUrl} onChange={e=>setForm({...form,baseUrl:e.target.value})} placeholder="https://api.deepseek.com"/></label>
         <label>模型名称<input value={form.model} onChange={e=>setForm({...form,model:e.target.value})} placeholder="填写服务提供的模型 ID"/></label>
         <label>API Key <span>{form.hasKey?'已保存 · 留空保留现有密钥':'仅保存在这台电脑'}</span><input type="password" value={form.key} onChange={e=>setForm({...form,key:e.target.value})} placeholder={form.hasKey?'••••••••••••••••':'输入 API Key'} autoComplete="off"/></label>
-        <p className="privacy-caption">选择云端服务后，待翻译的正文会发送至该服务。</p>
+        <p className="privacy-caption">待翻译的正文、相邻段落和少量文档开头会发送至所选服务，用于理解上下文。</p>
       </>}
       <label className="checkbox-label"><input type="checkbox" checked={form.useGlossary} onChange={e=>setForm({...form,useGlossary:e.target.checked})}/><div><strong>计算机 / 机器人学术语表</strong><small>例如 self-attention → 自注意力、twist → 运动旋量。术语提示有助于一致性，不能保证每次都正确。</small></div></label>
       <label>自定义术语 <span>每行：英文 = 中文；优先于内置词表</span><textarea className="glossary-input" aria-label="自定义术语" value={form.glossary} onChange={e=>setForm({...form,glossary:e.target.value})} placeholder={'embedding = 嵌入\nrigid body = 刚体'} rows={3}/></label>

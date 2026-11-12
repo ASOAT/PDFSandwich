@@ -15,14 +15,15 @@ async def translate_request(request,send):
     from toc_layout import translate_contents
     from scan_layout import scan_profile
     started=time.perf_counter()
-    engine=TextEngine(request,lambda message:send({'type':'progress','progress':0,'stage':message}))
+    engine=TextEngine(request,lambda message:send({'type':'progress','progress':0,'stage':message}),
+                      loop=asyncio.get_running_loop())
     output=Path(request['output']);output.parent.mkdir(parents=True,exist_ok=True)
     temporary=str(output)+'.tmp'
     region_audit=[]
     try:
         engine.control.check()
         scan=scan_profile(request['input'])
-        toc=translate_contents(request['input'],temporary,engine.translate,
+        toc=await asyncio.to_thread(translate_contents,request['input'],temporary,engine.translate,
             lambda stage,progress:send({'type':'progress','progress':progress,'stage':stage}))
         if toc is None:
             send({'type':'progress','progress':0,'stage':'正在准备排版引擎（首次启动较慢）…'})
@@ -89,7 +90,10 @@ async def translate_request(request,send):
     except (Exception, asyncio.CancelledError):
         engine.control.check()
         raise
-    finally:engine.close()
+    finally:
+        engine.close()
+        if engine.cloud is not None:
+            await engine.cloud.close()
 
 def main(server=False):
     if hasattr(sys.stdout,'reconfigure'):sys.stdout.reconfigure(encoding='utf-8')

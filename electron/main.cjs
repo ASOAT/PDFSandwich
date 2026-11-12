@@ -346,7 +346,10 @@ const actions = {
     if(!next.saveTranslation)translationSaver.cancelPending();else scheduleTranslationSave();
     emit(); return publicSettings();
   },
-  testConnection: async () => { if (settings.provider === 'local') return { text: '本地引擎已启用。首次翻译页面时自动下载模型，无需 API Key。' }; const text = await completion([{ role: 'user', content: 'Translate to simplified Chinese. Return only the translation: The reader preserves mathematical formulas.' }], 120); if (!text) throw new Error('服务未返回文本。'); return { text }; },
+  testConnection: () => {
+    if (settings.provider === 'local') return { text: '本地引擎已启用。首次翻译页面时自动下载模型，无需 API Key。' };
+    return separatePython('test_cloud_connection', { settings: { ...settings, apiKey } });
+  },
   export: async ({ mode }) => {
     if (!doc) return; if (!['chinese','bilingual'].includes(mode)) throw new Error('未知导出方式。');
     if (Object.values(doc.translations).filter(x => x.status === 'ready').length !== doc.pages.length) throw new Error('请先完成整本翻译。原文批注可随时直接保存。');
