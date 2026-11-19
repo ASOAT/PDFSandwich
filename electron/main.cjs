@@ -16,6 +16,8 @@ const { createResearch } = require('./research.cjs');
 const { createSignalStore } = require('./signals.cjs');
 const { migrateEnglishLibrary } = require('./library-migration.cjs');
 const { TranslationFileSaver, snapshotTranslation } = require('./translation-file.cjs');
+const { ZoteroClient, parseLink, noteDocumentId } = require('./zotero.cjs');
+const { ReadingSessions } = require('./reading-session.cjs');
 protocol.registerSchemesAsPrivileged([{ scheme: 'pdfsandwich', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }]);
 if (process.env.PDFSANDWICH_DATA_DIR) app.setPath('userData', path.resolve(process.env.PDFSANDWICH_DATA_DIR));
 const root = path.join(__dirname, '..');
@@ -23,21 +25,24 @@ let win, worker, updates, library, research, libraryError = '', seq = 0, doc = n
 const queue = new PageQueue();
 const retranslatePages = new Set();
 let settings = { provider: 'local', localEngine: 'hy', useGlossary: true, glossary: '', baseUrl: 'https://api.deepseek.com', model: 'deepseek-flash', autoTranslate: true, saveTranslation: false }, apiKey = '', recent = [];
-const pending = new Map(), files = new Map(), mappingTasks = new Set();
+const pending = new Map(), files = new Map(), mappingTasks = new Set(), pageTasks = new Set();
 let alignmentTail = Promise.resolve();
 let history = [], future = [], generation = 0, autoPaused = false;
 let removingLibraryDocuments = false;
 let activePage = null, priorityPage = 0, wholeBookActive = false;
 let readingDirection=1;
+let opening = Promise.resolve(), switchingDocument = false, readingSession = null;
 const userDir = () => app.getPath('userData');
-const docDir = () => path.join(userDir(), 'documents', doc.id);
+const sessions = new ReadingSessions(userDir());
+const zotero = new ZoteroClient();
+const docDir = () => path.join(userDir(), doc.zotero ? 'zotero-documents' : 'documents', doc.id);
 const draftPath = () => path.join(docDir(), 'draft.json');
 const stageLabels = {'Parse PDF and Create Intermediate Representation':'读取页面文字与图形','DetectScannedFile':'检查文字层','Parse Page Layout':'识别页面布局','Parse Paragraphs':'整理正文段落','Parse Formulas and Styles':'保留公式与样式','Translate Paragraphs':'在翻译引擎中处理正文','Typesetting':'排版中文正文','Add Fonts':'准备中文字体','Generate drawing instructions':'生成中文页面','Subset font':'整理页面字体','Save PDF':'保存中文 PDF'};
 const redact = value => String(value).replaceAll(apiKey || '\0', '[redacted]');
 const translator = new TranslationWorker(() => backendCommand('--translate-server'), redact);
 const readingSave = new ReadingSave(()=>persist());
 const translationSaver = new TranslationFileSaver({
-  snapshot: () => settings.saveTranslation && doc ? snapshotTranslation(doc) : null,
+  snapshot: () => settings.saveTranslation && doc && !doc.zotero ? snapshotTranslation(doc) : null,
   write: args => separatePython('sync_translation',args),
   status: (current,status,error='') => { current ||= doc; if(current) { current.autoSave={...current.autoSave,status,error:redact(error)}; if(current===doc)emit(); } },
   result: (snapshot,result) => {
@@ -48,7 +53,7 @@ const translationSaver = new TranslationFileSaver({
     if(current===doc){persist();emit();}
   }
 });
-function scheduleTranslationSave() { if(settings.saveTranslation&&doc&&!removingLibraryDocuments)translationSaver.request(); }
+function scheduleTranslationSave() { if(settings.saveTranslation&&doc&&!doc.zotero&&!removingLibraryDocuments)translationSaver.request(); }
 
 function backendCommand(mode = '') {
   if (app.isPackaged) return { exe: path.join(process.resourcesPath, 'backend', 'pdfsandwich-worker.exe'), args: mode ? [mode] : [] };
@@ -89,9 +94,18 @@ function jsonWrite(file, data) {
 function readJson(file, fallback) { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; } }
 function urlFor(file) { const id = crypto.randomUUID(); files.set(id, file); return `pdfsandwich://file/${id}`; }
 function publicSettings() { return { ...settings, hasKey: Boolean(apiKey) }; }
-function state() { if(doc)doc.libraryId=library?.data.documents.find(item=>item.path===doc.path)?.id;return { doc, settings: publicSettings(), recent, canUndo: history.length > 0, canRedo: future.length > 0, queued: queue.length, translating: busy }; }
+function state() { if(doc&&!doc.zotero)doc.libraryId=library?.data.documents.find(item=>item.path===doc.path)?.id;return { doc, settings: publicSettings(), recent, canUndo: history.length > 0, canRedo: future.length > 0, queued: queue.length, translating: busy }; }
 function emit() { if (win && !win.isDestroyed()) win.webContents.send('pdfsandwich:state', state()); }
-function persist() { readingSave.cancel(); if (doc) jsonWrite(draftPath(), { stamp: doc.stamp, annotations: doc.annotations, dirty: doc.dirty, translationFile:doc.translationFile, cacheVersion: doc.cacheVersion, translator: cacheKey(null, settings), translations: Object.fromEntries(Object.entries(doc.translations).filter(([,v]) => v.status === 'ready').map(([k,v]) => [k, { path: v.path, status: 'ready', warnings: v.warnings || 0, seconds: v.seconds, qualityVersion: v.qualityVersion || 5 }])), page: doc.currentPage, fraction: doc.currentFraction, zoom: doc.viewZoom }); }
+function persist() {
+  readingSave.cancel();
+  if (!doc) return;
+  const draft = {stamp:doc.stamp, annotations:doc.annotations, dirty:doc.dirty, page:doc.currentPage, fraction:doc.currentFraction, zoom:doc.viewZoom};
+  if (!doc.zotero) Object.assign(draft, {
+    translationFile:doc.translationFile, cacheVersion:doc.cacheVersion, translator:cacheKey(null, settings),
+    translations:Object.fromEntries(Object.entries(doc.translations).filter(([,v])=>v.status==='ready').map(([k,v])=>[k,{path:v.path,status:'ready',warnings:v.warnings||0,seconds:v.seconds,qualityVersion:v.qualityVersion||5}]))
+  });
+  jsonWrite(draftPath(), draft);
+}
 function remember() { history.push(structuredClone(doc.annotations)); if (history.length > 60) history.shift(); future = []; }
 function changed() { doc.dirty = true; persist(); emit(); scheduleTranslationSave(); }
 
@@ -104,7 +118,8 @@ async function save() {
     await translationSaver.flush();
     if (current.annotations.some(a => !a.en)) throw new Error('仍有中文侧标记未能对应到原文，无法保存。请删除或重新选择这些标记。');
     const snapshot = structuredClone(current.annotations);
-    const result = await python('save_original', { path: current.path, annotations: snapshot, expected_stamp: current.stamp, baseline: current.baseline });
+    const backup_directory = current.zotero ? path.join(docDir(), 'backups') : undefined;
+    const result = await python('save_original', { path: current.path, annotations: snapshot, expected_stamp: current.stamp, baseline: current.baseline, backup_directory });
     current.stamp = result.stamp; current.baseline = result.baseline; current.backup = result.backup;
     current.dirty = JSON.stringify(current.annotations) !== JSON.stringify(snapshot);
     persist(); emit(); return { backup: result.backup };
@@ -113,7 +128,7 @@ async function save() {
 }
 async function mayLeave() {
   if (!doc?.dirty) return true;
-  const answer = await dialog.showMessageBox(win, { type: 'question', buttons: ['保存原 PDF', '保留草稿，稍后保存', '取消'], defaultId: 0, cancelId: 2, message: '当前 PDF 有尚未写入文件的批注', detail: '草稿已保存在本机。保存会更新原 PDF，并在同目录自动创建备份。' });
+  const answer = await dialog.showMessageBox(win, { type: 'question', buttons: ['保存原 PDF', '保留草稿，稍后保存', '取消'], defaultId: 0, cancelId: 2, message: '当前 PDF 有尚未写入文件的批注', detail: doc.zotero ? '草稿已保存在本机。保存会更新 Zotero 中的原 PDF，并在 PDFSandwich 数据目录创建备份。' : '草稿已保存在本机。保存会更新原 PDF，并在同目录自动创建备份。' });
   if (answer.response === 2) return false;
   if (answer.response === 0) await save();
   return true;
@@ -126,38 +141,94 @@ function stopTranslation() {
   busy = false; emit();
   return stopped;
 }
-async function openDocument(file) {
+async function disposeReadingSession() {
+  if (!readingSession) return;
+  const directory = readingSession;
+  readingSession = null;
+  await sessions.remove(directory).catch(error=>console.warn('Zotero session cleanup:', error.code));
+}
+async function finishDocumentWork() {
+  readingSave.flush();
+  await stopTranslation();
+  await Promise.allSettled([...pageTasks, ...mappingTasks]);
+  await translationSaver.flush();
+}
+async function closeReadingDocument() {
+  if (!doc || !await mayLeave()) return false;
+  if (savePromise) await savePromise;
+  switchingDocument = true;
+  try {
+    await finishDocumentWork();
+    files.clear();
+    await disposeReadingSession();
+    doc=null;history=[];future=[];emit();
+    return true;
+  } finally {switchingDocument=false;}
+}
+function openDocument(file, options) {
+  const result = opening.then(()=>loadDocument(file, options));
+  opening = result.catch(()=>{});
+  return result;
+}
+async function loadDocument(file, {zotero:zoteroRef, zoteroMetadata, page} = {}) {
   if (removingLibraryDocuments) throw new Error('正在移除文献，请稍候。');
+  if (stopping || updates?.snapshot().status === 'installing') throw new Error('应用正在关闭或更新。');
   if (!await mayLeave()) return null;
   if (savePromise) await savePromise;
   if (!file) { const result = await dialog.showOpenDialog(win, { title: '打开英文 PDF', filters: [{ name: 'PDF 文档', extensions: ['pdf'] }], properties: ['openFile'] }); if (result.canceled) return null; file = result.filePaths[0]; }
   if (typeof file !== 'string' || path.extname(file).toLowerCase() !== '.pdf') throw new Error('请选择 PDF 文件。');
   const metadata = await python('inspect', { path: file });
+  if (page !== undefined && page >= metadata.pages.length) throw new Error('链接页码超出文献范围。');
   await translationSaver.flush();
   readingSave.flush();
-  stopTranslation(); autoPaused = false; files.clear(); history = []; future = [];
-  doc = { ...metadata, sourceUrl: urlFor(metadata.path), dirty: false, currentPage: 0, currentFraction: 0, viewZoom: 1, translations: {}, cacheVersion: cacheKey(metadata.stamp, settings), backup: null };
+  const nextSession = zoteroRef ? await sessions.create() : null;
+  switchingDocument = true;
+  try {
+    const stopped = stopTranslation();
+    if (readingSession) {
+      await Promise.allSettled([stopped, ...pageTasks, ...mappingTasks]);
+      files.clear();
+      await disposeReadingSession();
+    }
+    autoPaused = false; files.clear(); history = []; future = [];
+    readingSession = nextSession;
+    doc = { ...metadata, zotero:zoteroRef, zoteroMetadata, libraryId:zoteroRef&&noteDocumentId(zoteroRef), sourceUrl: urlFor(metadata.path), dirty: false, currentPage: 0, currentFraction: 0, viewZoom: 1, translations: {}, cacheVersion: cacheKey(metadata.stamp, settings), backup: null };
+  } finally { switchingDocument = false; }
   const saved = readJson(draftPath(), null);
   if (saved && JSON.stringify(saved.stamp) === JSON.stringify(doc.stamp)) {
-    doc.translationFile=saved.translationFile;
-    if(saved.translationFile)doc.autoSave={status:'saved',path:saved.translationFile.path,updatedAt:saved.translationFile.updatedAt,error:''};
+    if (!doc.zotero && saved.translationFile) {
+      doc.translationFile=saved.translationFile;
+      doc.autoSave={status:'saved',path:saved.translationFile.path,updatedAt:saved.translationFile.updatedAt,error:''};
+    }
     doc.annotations = saved.annotations || doc.annotations; doc.dirty = saved.dirty || false;
     const position = readingPosition(saved, doc.pages.length);
     doc.currentPage = position.page; doc.currentFraction = position.fraction; doc.viewZoom = position.zoom;
     // Keep the translation namespace across annotation-only saves; source content is unchanged.
-    if (saved.translator === cacheKey(null, settings)) {
+    if (!doc.zotero && saved.translator === cacheKey(null, settings)) {
       doc.cacheVersion = saved.cacheVersion || doc.cacheVersion;
       for (const [page, item] of Object.entries(saved.translations || {})) if (fs.existsSync(item.path) && usableTranslation(item, doc.translationProfile)) doc.translations[page] = { ...item, url: urlFor(item.path), progress: 100 };
     }
   }
+  if(page!==undefined){doc.currentPage=page;doc.currentFraction=0;}
   priorityPage = doc.currentPage;
-  library?.upsert({...metadata,title:metadata.name.replace(/\.pdf$/i,'')},{opened:true});
-  library?.translation(doc.path,Object.values(doc.translations).filter(item=>item.status==='ready').length);
-  recent = [{ path: file, name: doc.name, pages: doc.pages.length, openedAt: Date.now() }, ...recent.filter(x => x.path !== file)].slice(0, 12);
-  jsonWrite(path.join(userDir(), 'recent.json'), recent); persist(); emit();
+  if (!doc.zotero) {
+    library?.upsert({...metadata,title:metadata.name.replace(/\.pdf$/i,'')},{opened:true});
+    library?.translation(doc.path,Object.values(doc.translations).filter(item=>item.status==='ready').length);
+    recent = [{ path: file, name: doc.name, pages: doc.pages.length, openedAt: Date.now() }, ...recent.filter(x => x.path !== file)].slice(0, 12);
+    jsonWrite(path.join(userDir(), 'recent.json'), recent);
+  }
+  persist(); emit();
   for (const item of doc.annotations) if (item.accuracy !== 'manual' && (!item.en || !item.zh || item.mappingVersion !== 4 || ['pending', 'unmatched'].includes(item.accuracy))) scheduleMap(item.id);
   scheduleTranslationSave();
   return state();
+}
+function openZotero(ref, page) {
+  const result=opening.then(async()=>{
+    const attachment=await zotero.resolve(ref);
+    return loadDocument(attachment.path, {zotero:attachment.reference,zoteroMetadata:attachment.metadata,page});
+  });
+  opening=result.catch(()=>{});
+  return result;
 }
 async function completion(messages, maxTokens = 1500) {
   if (settings.provider !== 'api') throw new Error('本地翻译模式不会调用云端 API。');
@@ -170,7 +241,7 @@ async function completion(messages, maxTokens = 1500) {
 }
 async function mapItem(id, anchor) {
   const current = doc, item = current?.annotations.find(x => x.id === id);
-  if (!item || item.accuracy === 'manual' || !current.translations[item.page]?.path) return;
+  if (!item || switchingDocument || stopping || item.accuracy === 'manual' || !current.translations[item.page]?.path) return;
   const translation = current.translations[item.page], translated = translation.path;
   const origin = anchor || item.origin;
   const sourceItem = anchor && anchor !== item.origin ? { ...item, origin, selectedText: undefined } : item;
@@ -203,7 +274,7 @@ async function mapItem(id, anchor) {
 }
 function scheduleMap(id, anchor) { const task = mapItem(id, anchor).catch(() => {}).finally(() => mappingTasks.delete(task)); mappingTasks.add(task); return task; }
 function enqueue(pages, prioritize = true, automatic = false) {
-  if (!doc) return;
+  if (!doc || switchingDocument || stopping) return;
   const list = [...new Set(pages)].filter(p => Number.isInteger(p) && p >= 0 && p < doc.pages.length && mayTranslate(doc,p,automatic) && !['ready', 'translating', ...(automatic ? ['error'] : [])].includes(doc.translations[p]?.status));
   const dropped = queue.add(list, { automatic, prioritize });
   for (const p of dropped) if (doc.translations[p]?.status === 'queued') doc.translations[p] = { status: 'idle', progress: 0 };
@@ -222,11 +293,16 @@ async function pump() {
   const explicit = queue.explicit.has(queue.items[0]);
   busy = true; const version = generation, current = doc, index = queue.shift();
   const force = retranslatePages.delete(index);
+  let finish;
+  const finished = new Promise(resolve=>{finish=resolve;});
+  pageTasks.add(finished);
   const task = { current, index, explicit, force, cancelRequested: false }; activePage = task;
-  const dir = path.join(docDir(), 'translations', current.cacheVersion, String(index)); fs.mkdirSync(dir, { recursive: true });
+  const memoryDir=readingSession;
+  const dir = path.join(memoryDir||docDir(), 'translations', current.cacheVersion, String(index));
   const input = path.join(dir, 'source.pdf'), output = path.join(dir, 'zh.pdf');
   current.translations[index] = { status: 'translating', progress: 0, stage: '检查页面文字层' }; emit();
   try {
+    fs.mkdirSync(dir, { recursive: true });
     current.pages[index].translationKind ||= await python('page_translation_kind',{path:current.path,index});
     if (version !== generation) return;
     if (!mayTranslate(current,index,!explicit)) { delete current.translations[index]; persist(); emit(); return; }
@@ -237,12 +313,12 @@ async function pump() {
     if (!fs.existsSync(input) || !fs.statSync(input).size) await python('extract_page', { path: current.path, index, output: input });
     if (version !== generation) return;
     if (task.cancelRequested) throw Object.assign(new Error('优先处理当前页'), { code: 'TRANSLATION_CANCELLED' });
-    const result = await translator.run({ input, output, force, documentPath:current.path, pageIndex:index, modelDir: path.join(userDir(), 'models'), settings: { ...settings, apiKey: settings.provider === 'api' ? apiKey : '' } }, userDir(), event => {
+    const result = await translator.run({ input, output, force, documentPath:current.path, pageIndex:index, memoryDir, modelDir: path.join(userDir(), 'models'), settings: { ...settings, apiKey: settings.provider === 'api' ? apiKey : '' } }, userDir(), event => {
       if (version === generation) { Object.assign(current.translations[index], { progress: event.progress, stage: stageLabels[event.stage] || event.stage }); emit(); }
     });
     if (version !== generation) return;
     current.translations[index] = { status: 'ready', progress: 100, path: output, url: urlFor(output), warnings: result.warnings || 0, seconds: result.seconds, qualityVersion: 8 }; persist(); emit();
-    library?.translation(current.path,Object.values(current.translations).filter(item=>item.status==='ready').length);
+    if (!current.zotero) library?.translation(current.path,Object.values(current.translations).filter(item=>item.status==='ready').length);
     scheduleTranslationSave();
     for (const item of current.annotations.filter(a => a.page === index)) { if (item.accuracy === 'manual') item.accuracy = 'pending'; scheduleMap(item.id, item.en ? 'en' : undefined); }
   } catch (error) { if (version === generation) {
@@ -255,7 +331,7 @@ async function pump() {
     } else current.translations[index] = { status: 'error', progress: 0, error: redact(error.message) };
     emit();
   } }
-  finally { if (version === generation) { activePage = null; busy = false; emit(); pump(); } }
+  finally { pageTasks.delete(finished);finish(); if (version === generation) { activePage = null; busy = false; emit(); pump(); } }
 }
 
 const signalStore = createSignalStore(path.join(userDir(), 'reader-signals.json'), nativeImage);
@@ -271,6 +347,14 @@ const actions = {
   updateRelease: () => shell.openExternal('https://github.com/ASOAT/PDFSandwich/releases/latest'),
   state: () => state(),
   open: args => openDocument(args?.path),
+  closeDocument: () => {
+    const result=opening.then(closeReadingDocument);
+    opening=result.catch(()=>{});
+    return result;
+  },
+  zoteroLibraries: () => zotero.libraries(),
+  zoteroSnapshot: args => zotero.snapshot(args),
+  zoteroOpen: args => openZotero(args),
   save,
   page: ({ page, fraction = 0, zoom, documentUrl }) => {
     if (!doc || (documentUrl && documentUrl !== doc.sourceUrl) || !Number.isInteger(page) || page < 0 || page >= doc.pages.length) return;
@@ -352,6 +436,7 @@ const actions = {
   },
   export: async ({ mode }) => {
     if (!doc) return; if (!['chinese','bilingual'].includes(mode)) throw new Error('未知导出方式。');
+    if(doc.zotero)throw new Error('Zotero 文献的中文译文仅在当前阅读会话使用。');
     if (Object.values(doc.translations).filter(x => x.status === 'ready').length !== doc.pages.length) throw new Error('请先完成整本翻译。原文批注可随时直接保存。');
     await save();
     const result = await dialog.showSaveDialog(win, { title: '保存译文 PDF', defaultPath: doc.path.replace(/\.pdf$/i, mode === 'chinese' ? '.zh.pdf' : '.bilingual.pdf'), filters: [{ name: 'PDF', extensions: ['pdf'] }] });
@@ -438,13 +523,27 @@ Object.assign(actions,{
   translationReveal:()=>{if(doc?.translationFile&&fs.existsSync(doc.translationFile.path))shell.showItemInFolder(doc.translationFile.path);}
 });
 
-let pendingDeepLink=process.argv.find(value=>value.startsWith('pdfsandwich://document/'));
+const isDeepLink=value=>/^pdfsandwich:\/\/(document|zotero)\//i.test(value);
+let pendingDeepLink=process.argv.find(isDeepLink), rendererReady=false;
+async function navigateExternal(link) {
+  if(new URL(link).hostname==='zotero'){
+    const {page,...ref}=parseLink(link);
+    return openZotero(ref,page);
+  }
+  return research.navigate(link);
+}
+function receiveDeepLink(link) {
+  if(!rendererReady){pendingDeepLink=link;return;}
+  win.restore();win.show();win.focus();
+  if(link)navigateExternal(link).catch(error=>dialog.showErrorBox('打开文献链接失败',redact(error.message)));
+}
 if(!process.env.PDFSANDWICH_DATA_DIR){
   if(!app.requestSingleInstanceLock())app.quit();
-  else app.on('second-instance',(_event,args)=>{const link=args.find(value=>value.startsWith('pdfsandwich://document/'));if(link&&research)research.navigate(link).catch(error=>dialog.showErrorBox('打开文献链接失败',error.message));else{win?.show();win?.focus();}});
-  app.on('open-url',(event,url)=>{event.preventDefault();if(research)research.navigate(url).catch(error=>dialog.showErrorBox('打开文献链接失败',error.message));else pendingDeepLink=url;});
+  else app.on('second-instance',(_event,args)=>receiveDeepLink(args.find(isDeepLink)));
+  app.on('open-url',(event,url)=>{if(isDeepLink(url)){event.preventDefault();receiveDeepLink(url);}});
 }
 app.whenReady().then(() => {
+  const sweptSessions=sessions.sweep().catch(error=>console.warn('Zotero session cleanup:',error.code));
   const stored = readJson(path.join(userDir(), 'settings.json'), {});
   settings = { ...settings, ...Object.fromEntries(Object.entries(stored).filter(([k]) => ['provider','baseUrl','model','autoTranslate','localEngine','useGlossary','glossary','saveTranslation'].includes(k))) };
   try { apiKey = stored.secret ? safeStorage.decryptString(Buffer.from(stored.secret, 'base64')) : ''; } catch { apiKey = ''; }
@@ -471,7 +570,7 @@ app.whenReady().then(() => {
     } catch { return new Response('File unavailable', { status: 404 }); }
   });
   win = new BrowserWindow({ width: 1480, height: 960, minWidth: 1000, minHeight: 650, backgroundColor: '#f4f3ef', title: 'PDFSandwich', icon: path.join(root, 'dist', 'icon.png'), autoHideMenuBar: true, webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false } });
-  research=createResearch({app,BrowserWindow,dialog,shell,clipboard,ClipboardItem,nativeImage,root,userDir,library,getDoc:()=>doc,getWindow:()=>win,python,separatePython,openDocument,emit});
+  research=createResearch({app,BrowserWindow,dialog,shell,clipboard,ClipboardItem,nativeImage,root,userDir,library,getDoc:()=>doc,getWindow:()=>win,python,separatePython,openDocument,openZotero,emit});
   Object.assign(actions,research.actions);
   app.once('will-quit',()=>research.dispose());
   if(app.isPackaged&&!process.env.PDFSANDWICH_DATA_DIR)app.setAsDefaultProtocolClient('pdfsandwich');
@@ -483,6 +582,7 @@ app.whenReady().then(() => {
     onChange: value => { if (!win.isDestroyed()) win.webContents.send('pdfsandwich:update', value); },
     savePreference: autoCheck => jsonWrite(path.join(userDir(), 'updates.json'), { autoCheck }),
     beforeInstall: async report => {
+      await opening;
       report(0,5,'正在保存笔记');
       if(!await research.flush())throw new Error('请先保存或处理笔记编辑冲突，再安装更新。');
       report(1,5,'正在保存 PDF 批注');
@@ -490,7 +590,7 @@ app.whenReady().then(() => {
       if (savePromise) await savePromise;
       report(2,5,'正在停止翻译并完成标记对应');
       await stopTranslation();
-      await Promise.allSettled([...mappingTasks]);
+      await Promise.allSettled([...pageTasks, ...mappingTasks]);
       report(3,5,'正在写入译文与阅读位置');
       await translationSaver.flush();
       const waitUntil = Date.now() + 30000;
@@ -506,7 +606,9 @@ app.whenReady().then(() => {
         closingWorker.once('exit', () => { clearTimeout(timeout); resolve(); });
         closingWorker.kill();
       });
-      jsonWrite(path.join(userDir(), 'resume-update.json'), { path: doc?.path||null, version:updates.snapshot().version });
+      jsonWrite(path.join(userDir(), 'resume-update.json'), { path: doc?.path||null, zotero:doc?.zotero, zoteroMetadata:doc?.zoteroMetadata, version:updates.snapshot().version });
+      files.clear();
+      await disposeReadingSession();
       stopping = true;
       report(5,5,'准备完成');
       return true;
@@ -517,20 +619,47 @@ app.whenReady().then(() => {
   app.once('will-quit', () => updates.dispose());
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', event => event.preventDefault());
-  ipcMain.handle('pdfsandwich:call', async (event, action, args) => { const primary=event.sender===win.webContents&&event.senderFrame===win.webContents.mainFrame;const secondary=research.trusted(event)&&/^(notes|research)/.test(action);if((!primary&&!secondary)||!Object.hasOwn(actions,action))throw new Error('未知操作。'); if (updates.snapshot().status === 'installing' && !['updateState', 'state', 'notesSave', 'notesGet', 'notesFlushed'].includes(action)) throw new Error('正在准备安装更新，请稍候。'); if(removingLibraryDocuments&&!['state','libraryState','updateState','notesSave','notesGet','notesFlushed'].includes(action)){if(['page','translate'].includes(action))return;throw new Error('正在移除文献，请稍候。');} return actions[action](args || {}); });
+  ipcMain.handle('pdfsandwich:call', async (event, action, args) => { const primary=event.sender===win.webContents&&event.senderFrame===win.webContents.mainFrame;const secondary=research.trusted(event)&&/^(notes|research)/.test(action);if((!primary&&!secondary)||!Object.hasOwn(actions,action))throw new Error('未知操作。'); if (updates.snapshot().status === 'installing' && !['updateState', 'state', 'notesSave', 'notesGet', 'notesFlushed'].includes(action)) throw new Error('正在准备安装更新，请稍候。'); if(removingLibraryDocuments&&!['state','libraryState','updateState','notesSave','notesGet','notesFlushed'].includes(action)){if(['page','translate'].includes(action))return;throw new Error('正在移除文献，请稍候。');} await sweptSessions;return actions[action](args || {}); });
   if (process.env.PDFSANDWICH_DEV_URL === 'http://127.0.0.1:5173') win.loadURL(process.env.PDFSANDWICH_DEV_URL); else win.loadFile(path.join(root, 'dist', 'index.html'));
-  win.on('close', event => { if (stopping) return; event.preventDefault(); if (removingLibraryDocuments || updates.snapshot().status === 'installing') return; research.flush().then(ok=>ok?mayLeave():false).then(async yes => { if (yes) { stopping = true; readingSave.flush(); await stopTranslation(); await Promise.allSettled([...mappingTasks]); await translationSaver.flush(); worker?.kill(); win.destroy(); app.quit(); } }).catch(error => dialog.showErrorBox('保存失败', redact(error.message))); });
+  let closingWindow=false;
+  win.on('close', event => {
+    if (stopping&&!closingWindow) return;
+    event.preventDefault();
+    if (closingWindow||removingLibraryDocuments||updates.snapshot().status==='installing') return;
+    closingWindow=true;
+    (async()=>{
+      await opening;
+      if(!await research.flush()||!await mayLeave())return;
+      if(savePromise)await savePromise;
+      stopping=true;
+      await finishDocumentWork();
+      files.clear();
+      await disposeReadingSession();
+      worker?.kill();
+      win.destroy();app.quit();
+    })().catch(error=>{stopping=false;dialog.showErrorBox('保存失败',redact(error.message));}).finally(()=>{closingWindow=false;});
+  });
   const resumeFile = path.join(userDir(), 'resume-update.json');
   const resume = readJson(resumeFile, null);
   const restarting=Boolean(resume)||process.argv.includes('--updated');
   if(restarting)updates.startup('正在启动阅读器',0,2);
-  const argument = process.argv.find(x => /\.pdf$/i.test(x) && fs.existsSync(x)) || (typeof resume?.path === 'string' && fs.existsSync(resume.path) ? resume.path : null);
+  const explicitFile = process.argv.find(x => /\.pdf$/i.test(x) && fs.existsSync(x));
+  const resumePath=typeof resume?.path==='string'&&fs.existsSync(resume.path)?resume.path:null;
   win.webContents.once('did-finish-load', async () => {
-    if(restarting)updates.startup(argument?'正在恢复上次阅读的文档':'正在载入文献库',1,2);
-    try { if(argument)await openDocument(argument); }
+    if(restarting)updates.startup(explicitFile||resumePath||pendingDeepLink?'正在恢复上次阅读的文档':'正在载入文献库',1,2);
+    await sweptSessions;
+    try {
+      const link=pendingDeepLink;pendingDeepLink=null;
+      if(link)await navigateExternal(link);
+      else if(explicitFile)await openDocument(explicitFile);
+      else if(resumePath)await openDocument(resumePath,{zotero:resume.zotero,zoteroMetadata:resume.zoteroMetadata});
+    }
     catch(error) { updates.startupDone();dialog.showErrorBox('打开失败',error.message); }
-    finally { updates.startupDone();await fsp.rm(resumeFile,{force:true}).catch(()=>{}); }
+    finally {
+      rendererReady=true;
+      if(pendingDeepLink){receiveDeepLink(pendingDeepLink);pendingDeepLink=null;}
+      updates.startupDone();await fsp.rm(resumeFile,{force:true}).catch(()=>{});
+    }
   });
-  if(pendingDeepLink)win.webContents.once('did-finish-load',()=>research.navigate(pendingDeepLink).catch(error=>dialog.showErrorBox('打开文献链接失败',error.message)));
 });
 app.on('window-all-closed', () => app.quit());

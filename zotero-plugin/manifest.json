@@ -1,0 +1,14 @@
+{
+  "manifest_version": 2,
+  "name": "PDFSandwich",
+  "version": "0.6.15",
+  "description": "Open Zotero PDF attachments in PDFSandwich.",
+  "homepage_url": "https://github.com/ASOAT/PDFSandwich",
+  "applications": {
+    "zotero": {
+      "id": "zotero@pdfsandwich.app",
+      "strict_min_version": "7.0",
+      "strict_max_version": "10.*"
+    }
+  }
+}

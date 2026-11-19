@@ -13,6 +13,27 @@ def engine_at(folder):
                       'settings':{'provider':'api','baseUrl':'http://localhost','model':'mock'}},lambda _:None)
 
 
+def test_session_translation_memory_is_reused_within_session_and_isolated_on_reopen(tmp_path):
+    models = tmp_path / 'models'
+    source = 'A neural network learns from data.'
+    for session_name in ['session-first', 'session-reopened']:
+        session = tmp_path / session_name
+        session.mkdir()
+        engine = TextEngine({'modelDir': str(models), 'memoryDir': str(session),
+                             'settings': {'provider': 'api', 'baseUrl': 'http://localhost', 'model': 'mock'}}, lambda _: None)
+        calls = []
+        engine.generate = lambda text: calls.append(text) or '神经网络从数据中学习。'
+        try:
+            assert engine.translate(source) == '神经网络从数据中学习。'
+            assert calls == [source]
+            assert engine.translate(source) == '神经网络从数据中学习。'
+            assert calls == [source]
+        finally:
+            engine.close()
+        assert (session / 'translation-memory.sqlite').is_file()
+    assert not (models / 'translation-memory.sqlite').exists()
+
+
 def test_formula_loss_repairs_only_fragments_and_keeps_formula_identity(tmp_path):
     engine=engine_at(tmp_path);calls=[]
     def generate(source):

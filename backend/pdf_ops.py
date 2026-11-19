@@ -158,14 +158,14 @@ def add_annotation(page, item, side):
     annotation.update()
 
 
-def save_original(path, annotations, expected_stamp, baseline):
+def save_original(path, annotations, expected_stamp, baseline, backup_directory=None):
     """Stage a complete verified copy before replacing the original, never truncate the original."""
     if stamp(path) != expected_stamp:
         raise ValueError("原 PDF 已被其他程序修改。请重新打开文件后再保存，避免覆盖外部修改。")
     source = Path(path)
     temp = source.with_name(f".{source.name}.{uuid.uuid4().hex}.tmp")
-    backup_dir = source.parent / ".pdfsandwich-backups"
-    backup_dir.mkdir(exist_ok=True)
+    backup_dir = Path(backup_directory) if backup_directory else source.parent / ".pdfsandwich-backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
     backup = backup_dir / f"{source.stem}.{time.time_ns()}.pdf"
     shutil.copy2(source, backup)
     shutil.copy2(source, temp)

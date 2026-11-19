@@ -38,6 +38,15 @@ def test_external_edits_are_not_overwritten(source):
     with pytest.raises(ValueError,match='其他程序修改'):pdf_ops.save_original(source,[mark()],before['stamp'],before['baseline'])
     assert source.read_bytes().endswith(b'% external change\n')
 
+
+def test_original_attachment_backup_can_live_outside_its_folder(source, tmp_path):
+    before = pdf_ops.inspect(source)
+    backup_directory = tmp_path / 'app-data' / 'backups'
+    result = pdf_ops.save_original(source, [mark()], before['stamp'], before['baseline'], backup_directory=backup_directory)
+    assert Path(result['backup']).parent == backup_directory
+    assert not (source.parent / '.pdfsandwich-backups').exists()
+    assert len(result['annotations']) == 1
+
 def test_failed_save_does_not_change_source(source):
     before=pdf_ops.inspect(source);original=source.read_bytes();bad=mark();bad['page']=99
     with pytest.raises(ValueError):pdf_ops.save_original(source,[bad],before['stamp'],before['baseline'])

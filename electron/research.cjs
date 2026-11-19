@@ -4,8 +4,9 @@ const crypto = require('node:crypto');
 const { NotesStore, sourceLink, decodeLink, within } = require('./notes.cjs');
 const metadata = require('./metadata.cjs');
 const { FormulaRecognizer } = require('./formula.cjs');
+const { fromNoteDocumentId } = require('./zotero.cjs');
 
-function createResearch({app, BrowserWindow, dialog, shell, clipboard, ClipboardItem, nativeImage, root, userDir, library, getDoc, getWindow, python, separatePython, openDocument, emit}) {
+function createResearch({app, BrowserWindow, dialog, shell, clipboard, ClipboardItem, nativeImage, root, userDir, library, getDoc, getWindow, python, separatePython, openDocument, openZotero, emit}) {
   const windows = new Set(), assets = new Map(), clips = new Map();
   const formulas = new FormulaRecognizer(async args=>{try{return await separatePython('formula_recognize',args);}finally{await fs.promises.unlink(args.image).catch(()=>{});}});
   const flushRequests=new Map();
@@ -25,14 +26,23 @@ function createResearch({app, BrowserWindow, dialog, shell, clipboard, Clipboard
   const store = () => { if(!notes)throw new Error(notesError || '笔记目录无法访问。');return notes; };
   function asset(file) { const id=crypto.createHash('sha256').update(file).digest('hex'); assets.set(id,file);return `pdfsandwich://asset/${id}`; }
   function currentDocument(id) {
+    const document=getDoc();
+    if(document?.zotero&&(!id||id===document.libraryId))return {...document.zoteroMetadata,id:document.libraryId,title:document.zoteroMetadata?.title||document.name.replace(/\.pdf$/i,'')};
     if(id)return library.get(id);
-    const document=getDoc(); const item=library.data.documents.find(item=>item.path===document?.path);
+    const item=library.data.documents.find(item=>item.path===document?.path);
     if(!item)throw new Error('请先从文献库打开 PDF。');return item;
   }
   async function navigate(link) {
-    const target=decodeLink(link), item=library.get(target.documentId);
-    if(target.page>=item.pages)throw new Error('链接页码超出文献范围。');
-    if(getDoc()?.path!==item.path&&!await openDocument(item.path))return false;
+    const target=decodeLink(link), ref=fromNoteDocumentId(target.documentId);
+    if(ref){
+      if(getDoc()?.libraryId!==target.documentId&&!await openZotero(ref,target.page))return false;
+      target.documentId=getDoc().libraryId;
+    }else{
+      const item=library.get(target.documentId);
+      if(target.page>=item.pages)throw new Error('链接页码超出文献范围。');
+      if((getDoc()?.zotero||getDoc()?.path!==item.path)&&!await openDocument(item.path))return false;
+    }
+    if(!getDoc()?.pages[target.page])throw new Error('链接页码超出文献范围。');
     getWindow()?.show();getWindow()?.focus();
     const doc=getDoc();doc.currentPage=target.page;doc.currentFraction=target.rect?Math.max(0,(target.rect[1]-40)/doc.pages[target.page].height):0;
     emit();broadcast({type:'navigate',...target});return true;

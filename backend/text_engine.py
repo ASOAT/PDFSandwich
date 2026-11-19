@@ -32,7 +32,8 @@ class TextEngine:
                     _models[identity]=HyModel(directory,progress)
             self.local=_models[identity]
             self.local.records=[]
-        self.memory=sqlite3.connect(directory/'translation-memory.sqlite',check_same_thread=False)
+        memory_directory = Path(request['memoryDir']) if request.get('memoryDir') else directory
+        self.memory=sqlite3.connect(memory_directory/'translation-memory.sqlite',check_same_thread=False)
         self.memory.execute('CREATE TABLE IF NOT EXISTS translations (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
         identity={key:self.cfg.get(key) for key in ('provider','localEngine','glossary','useGlossary')}
         if self.local is None:identity.update(baseUrl=self.cfg['baseUrl'],model=self.cfg['model'])
